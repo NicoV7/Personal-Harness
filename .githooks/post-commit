@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# BetterAI post-commit: replace any `staging` placeholders in component docs
+# with the just-committed SHA. Idempotent.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if ! command -v node >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Re-entrancy guard: if we just stamped, don't recurse.
+if [ "${BETTERAI_DOCS_STAMP_INFLIGHT:-}" = "1" ]; then
+  exit 0
+fi
+
+# Run the stamper. It updates affected component HTMLs AND sweeps any
+# leftover `staging` rows. If it modified anything, we create a follow-up
+# commit so the docs stay in sync. The guard env var prevents recursion.
+output=$(node scripts/update-component-docs.mjs post-commit 2>&1 || true)
+echo "$output"
+
+# If the script reported it updated or swept docs, commit them as a follow-up.
+if echo "$output" | grep -qE '(updated [0-9]+ component doc|swept stale)'; then
+  modified=$(git status --porcelain docs/components/ 2>/dev/null | awk '{print $2}')
+  if [ -n "$modified" ]; then
+    git add docs/components/
+    BETTERAI_DOCS_STAMP_INFLIGHT=1 git commit -m "docs(stamp): auto-record post-commit (component docs in sync)" --no-verify >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0
