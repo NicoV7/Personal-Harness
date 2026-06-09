@@ -146,6 +146,55 @@ function prependRow(html, { sha, date, subject }) {
   return html.slice(0, startIdx + START.length) + newSection + html.slice(endIdx)
 }
 
+function sweepStagingRows() {
+  // Post-commit hygiene: scan ALL component HTMLs and strip any leftover
+  // `staging` placeholder rows (from earlier pre-commit runs whose commit
+  // didn't trigger a post-commit fixup). Returns the list of cleaned files.
+  const { readdirSync } = imp_fs
+  let entries
+  try {
+    entries = readdirSync(DOCS)
+  } catch {
+    return []
+  }
+  const cleaned = []
+  for (const entry of entries) {
+    if (!entry.endsWith('.html') || entry === 'index.html') continue
+    const p = resolve(DOCS, entry)
+    let html
+    try {
+      html = readFileSync(p, 'utf8')
+    } catch {
+      continue
+    }
+    const before = html
+    const start = html.indexOf(START)
+    const end = html.indexOf(END)
+    if (start === -1 || end === -1) continue
+    const section = html.slice(start + START.length, end)
+    if (!section.includes('<code>staging</code>')) continue
+    const tbodyOpen = section.indexOf('<tbody>')
+    const tbodyClose = section.indexOf('</tbody>')
+    if (tbodyOpen === -1 || tbodyClose === -1) continue
+    const existing = section.slice(tbodyOpen + '<tbody>'.length, tbodyClose).trim()
+    const rows = existing
+      ? existing.split(/(?=<tr>)/).map((r) => r.trim()).filter(Boolean)
+      : []
+    const filtered = rows.filter((r) => !r.includes('<code>staging</code>'))
+    if (filtered.length === rows.length) continue
+    const newSection = `\n<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>\n${filtered.join('\n')}\n</tbody></table>\n`
+    const newHtml = html.slice(0, start + START.length) + newSection + html.slice(end)
+    if (newHtml !== before) {
+      writeFileSync(p, newHtml, 'utf8')
+      cleaned.push(`docs/components/${entry}`)
+    }
+  }
+  return cleaned
+}
+
+// Re-import readdirSync lazily so we don't change the import block above.
+import * as imp_fs from 'node:fs'
+
 function main() {
   const mode = process.argv[2] || 'pre-commit'
 
@@ -157,6 +206,16 @@ function main() {
   } else {
     console.error(`unknown mode: ${mode} (use 'pre-commit' or 'post-commit')`)
     process.exit(1)
+  }
+
+  // Post-commit hygiene: always sweep stale `staging` rows even if last commit
+  // didn't touch a component-mapped path.
+  if (mode === 'post-commit') {
+    const swept = sweepStagingRows()
+    if (swept.length > 0) {
+      console.log(`docs:stamp: swept stale 'staging' rows from ${swept.length} doc(s):`)
+      for (const s of swept) console.log(`  ${s}`)
+    }
   }
 
   if (files.length === 0) {
