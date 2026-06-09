@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# betterai CLI shim. Hands off to the compiled main.js.
+#
+# Resolves symlinks so $(dirname $0) points at the real install root even
+# when the user has /usr/local/bin/betterai symlinked into this script.
+set -e
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" = /* ]]; then
+    SOURCE="$TARGET"
+  else
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$DIR/$TARGET"
+  fi
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+exec node "$DIR/../dist/cli/main.js" "$@"

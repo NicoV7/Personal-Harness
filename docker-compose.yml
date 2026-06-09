@@ -1,0 +1,71 @@
+# BetterAI server — single-service compose, Phase 1.0 (Wave 3).
+# Per v4 design §"Default volume mounts" and §"MCP authentication (v1, mandatory)".
+#
+# install.sh writes:
+#   - BETTERAI_IMAGE_SHA   (SHA-pinned image tag — never :latest)
+#   - BETTERAI_UID         ($(id -u) on host)
+#   - BETTERAI_GID         ($(id -g) on host)
+#   - HOME                 (interpolated for the bind-mount source paths)
+# into the .env file alongside this compose file.
+
+services:
+  betterai:
+    # SHA-pinned tag. NEVER use :latest — silent image updates would change
+    # retrieval behavior without an audit trail. install.sh substitutes the
+    # ${BETTERAI_IMAGE_SHA} placeholder from .env.
+    image: betterai/server:${BETTERAI_IMAGE_SHA}
+    container_name: betterai
+
+    # TODO(install.sh): interpolate from `$(id -u):$(id -g)` on the host so the
+    # audit JSONL and embedding cache files end up owned by the developer, not
+    # root. The container's compiled artifacts run as 1000:1000 by default
+    # (see Dockerfile USER directive); compose overrides at deploy time.
+    user: "${BETTERAI_UID:-1000}:${BETTERAI_GID:-1000}"
+
+    # Bind to loopback only. The bearer-token middleware (src/server/auth) is
+    # the actual security boundary — see .betterai/rules/STANDARDS/security/
+    # mcp-tools-require-bearer.md for the threat model.
+    ports:
+      - "127.0.0.1:7777:7777"
+
+    # The 5 mounts from v4 design §"Default volume mounts":
+    #   1. corpus (rules/skills/memories) — rw, server writes new memories here
+    #   2. audit log — rw, append-only JSONL
+    #   3. embedding cache — rw, MiniLM vector index
+    #   4. bearer token — ro, written by install.sh on first run (mode 0600)
+    #   5. user's project tree — ro, server reads to do path-glob matching and check_file
+    volumes:
+      - ${HOME}/.betterai/rules:/data/rules:rw
+      - ${HOME}/.betterai/audit:/data/audit:rw
+      - ${HOME}/.betterai/embeddings:/data/embeddings:rw
+      - ${HOME}/.betterai/token:/data/token:ro
+      - ${HOME}/projects:/projects:ro
+      # Optional 6th mount: if install.sh is invoked with --enable-auto-retrieve-skill,
+      # it uncomments the line below so the server can drop a SKILL.md into the
+      # user's global Claude Code skills dir (auto-retrieve lever c, per the
+      # multi-agent eng review §1.6).
+      # - ${HOME}/.claude/skills:/host/claude-skills:rw
+
+    environment:
+      - BETTERAI_CORPUS_ROOT=/data
+      - BETTERAI_AUDIT_PATH=/data/audit/audit.jsonl
+      - BETTERAI_PROJECTS_ROOT=/projects
+      - BETTERAI_MCP_PORT=7777
+      - BETTERAI_TOKEN_PATH=/data/token
+      - BETTERAI_LOG_LEVEL=${BETTERAI_LOG_LEVEL:-info}
+
+    restart: unless-stopped
+
+    # Healthcheck via node's built-in fetch — no extra binary required in the
+    # slim runtime image. Per security rule, /health is the only path that
+    # may bypass bearer auth (and logs each bypass).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:7777/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

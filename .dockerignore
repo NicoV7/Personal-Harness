@@ -1,0 +1,36 @@
+# Build hygiene — keep the build context small and reproducible.
+# Never bake host-only state into the image.
+
+node_modules
+dist
+.git
+.gitignore
+
+# Claude Code/agent state — not part of the server.
+.claude
+
+# Local BetterAI state (corpus, audit, embeddings) — mounted at runtime.
+.betterai
+
+# Large pre-rendered roadmap (HTML, not consumed by the server).
+docs/IMPLEMENTATION-ROADMAP.html
+
+# Editor/OS noise.
+.DS_Store
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# Tests + fixtures don't ship in the runtime image. The build stage
+# compiles src/ only (tsconfig excludes __tests__), so test fixtures
+# are pure bloat in the build context.
+**/__tests__
+**/*.test.ts
+coverage
+.vitest
+
+# Worktrees and IDE settings.
+.idea
+.vscode

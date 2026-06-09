@@ -3,3 +3,9 @@
 .claude/worktrees/
 node_modules/
 *.log
+.agents/
+.github/agents/
+.n8nac/
+AGENTS.md
+n8nac-config.json
+workflows/
