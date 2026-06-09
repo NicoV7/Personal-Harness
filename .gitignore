@@ -1,0 +1,5 @@
+.claude/settings.local.json
+.claude/.edit-baks/
+.claude/worktrees/
+node_modules/
+*.log
