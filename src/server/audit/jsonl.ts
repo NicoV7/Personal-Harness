@@ -144,3 +144,4 @@ export class JsonlAuditWriter {
  * rotation + serialization.
  */
 export type AuditLogFn = (event: AuditEvent) => void;
+// trivial change to test the docs hook
