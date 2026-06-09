@@ -1,0 +1,76 @@
+# BetterAI distributed sub-corpus router
+# -------------------------------------------------------------------------
+# Maps an agent's request (file paths it's about to touch + intent
+# keywords from its plan) to the set of rule DOMAINS that should be
+# pulled into context. The retrieval layer then ranks rules WITHIN each
+# domain by recency + fire-count + applies_when match.
+#
+# Per the v4 design "Distributed Sub-Corpus Routing": we route to DOMAINS
+# rather than to individual rule ids. Domains are stable; ids churn.
+#
+# Multiple routers can fire on the same request — their domain sets are
+# UNIONED, then truncated by `max_total_rules` after per-domain capping.
+# -------------------------------------------------------------------------
+
+routers:
+  # -----------------------------------------------------------------------
+  # 1. Path-glob router
+  #    Looks at the file paths the agent is about to read/write/edit and
+  #    pulls in domains relevant to that surface area.
+  # -----------------------------------------------------------------------
+  - id: by-path-glob
+    rules:
+      # Any TypeScript file: pull general code-health domains.
+      - if_match: "**/*.ts"
+        domains: [maintainability, error-handling, structure]
+
+      # Auth surface: anything under an auth/ directory. Security is the
+      # primary lens; error-handling matters because auth failures must
+      # not silently downgrade.
+      - if_match: "**/auth/**"
+        domains: [security, error-handling]
+
+      # Webhook handlers: idempotency is the headline (retries are a fact
+      # of life), security because webhook endpoints are public, and
+      # observability because debugging webhook drift without traces is
+      # painful.
+      - if_match: "**/webhooks/**"
+        domains: [idempotency, security, observability]
+
+  # -----------------------------------------------------------------------
+  # 2. Intent-keyword router
+  #    Looks at the agent's stated intent (plan/design/implement/debug/...)
+  #    and pulls in domains relevant to that mode of work.
+  # -----------------------------------------------------------------------
+  - id: by-intent-keyword
+    rules:
+      # Planning / design / scaffolding: methodology rules (Surgical
+      # Changes, Iterate Don't Boil-the-Ocean) and structural guidance
+      # matter most before any code is written.
+      - if_intent_contains: ["plan", "design", "scaffold"]
+        domains: [methodology, structure, maintainability]
+
+      # Implementation / refactor / edit: maintainability and
+      # error-handling at the code level, methodology to keep the diff
+      # surgical.
+      - if_intent_contains: ["implement", "refactor", "edit"]
+        domains: [maintainability, error-handling, methodology]
+
+      # Debugging / investigation: methodology (don't shotgun-fix),
+      # error-handling (the bug is usually here), observability (you need
+      # signal before you can diagnose).
+      - if_intent_contains: ["debug", "investigate"]
+        domains: [methodology, error-handling, observability]
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+# If no router fires (or the agent's request is too vague to match), fall
+# back to the universally applicable domains. Caps prevent context bloat:
+# even if many routers fire, the agent never receives more than
+# `max_total_rules` rules in a single retrieval.
+# ---------------------------------------------------------------------------
+defaults:
+  domains: [maintainability, methodology]
+  max_rules_per_domain: 4
+  max_total_rules: 12
