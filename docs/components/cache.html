@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · cache</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; cache</div>
+<h1>cache &mdash; context_hash LRU + connection limiter</h1>
+<p class="meta-row">Tier: Core &middot; Files: <code>src/server/cache/{context-hash,connection-limiter}.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Two collaborating mechanisms. <strong>context_hash LRU</strong>: 256 entries, 60s TTL, key includes <code>scope</code> + <code>repo_root_detected</code> (per the BetterAI repo-rule <code>context-hash-includes-scope</code>). <strong>Connection limiter</strong>: 16 in-flight retrieve_* calls; 64-deep queue beyond; HTTP 429 on overflow.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Cross-scope cache poisoning</td><td>Repo X retrieves; cache stores; Repo Y with same intent text gets Repo X&rsquo;s rules</td><td>Cache key MUST include <code>scope</code> + <code>repo_root_detected</code>. Enforced by <code>.betterai</code> rule + unit test.</td><td><code>context-hash.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Hash collision attack</td><td>Two contexts coincidentally share <code>context_hash</code></td><td>SHA-256 over canonicalized JSON; 32-byte output</td><td><code>context-hash.ts</code></td><td><span class="pill s-good">cryptographic</span></td></tr>
+<tr><td>Memory exhaustion via queue</td><td>Attacker floods 1000 concurrent requests</td><td>Queue cap 64; overflow returns 429; per-token rate limit (deferred)</td><td><code>connection-limiter.ts</code></td><td><span class="pill s-warn">no per-token rate</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Cache key includes JSON-incompatible value</td><td>Canonical JSON throws; caller falls back to fresh retrieval</td><td><code>cache.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>TTL expires mid-request</td><td>Cache miss; fresh retrieve; new entry written</td><td><code>cache.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>LRU evicts entry under load</td><td>Cache miss; fresh retrieve; replaces oldest</td><td><code>cache.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Concurrent fills (cache stampede) for same key</td><td>Single-flight pattern: first request fills, others await</td><td>&mdash;</td><td><span class="pill s-warn">documented, not built</span></td></tr>
+<tr><td>Queue overflow during peak</td><td>HTTP 429 with <code>Retry-After</code>; caller backs off</td><td>&mdash;</td><td><span class="pill s-warn">no test yet</span></td></tr>
+<tr><td>Limiter deadlock</td><td>Semaphore wraps Promise; release in finally; queue uses linked list</td><td>&mdash;</td><td><span class="pill s-warn">no chaos test</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>No single-flight on identical context_hash mid-fill</td><td>5 subagents = 5 fills until first completes</td><td>S (Promise registry keyed by hash)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>Fixed 256-entry LRU (not configurable)</td><td>Can&rsquo;t tune at higher scales</td><td>XS (env var)</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>60s TTL is global (not per-tool)</td><td><code>explain_rule</code> changes rarely; could cache longer</td><td>S</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No per-token / per-session rate limiter</td><td>Bursty single client can DOS others</td><td>M (token bucket)</td><td><span class="pill s-warn">P2 in shared deployments</span></td></tr>
+<tr><td>Limiter metrics not exposed</td><td>Can&rsquo;t debug queue depth</td><td>S (audit event + status verb)</td><td><span class="pill s-warn">P2</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>LRU 256 entries</td><td>1024; unbounded</td><td>~5 MB RSS at full capacity (avg 20KB per entry); fits within v4 design memory budget</td><td>multi-agent eng review &sect;1.5</td></tr>
+<tr><td>60s TTL</td><td>5s; 5min; unbounded</td><td>Long enough to coalesce same-context fan-outs; short enough that rule edits show up quickly</td><td>multi-agent eng review &sect;1.5</td></tr>
+<tr><td>Key includes scope + repo_root_detected</td><td>Hash only the context object; namespace by token</td><td>BetterAI repo rule <code>context-hash-includes-scope</code>; documented as critical observability invariant</td><td><code>.betterai/rules/STANDARDS/observability/context-hash-includes-scope.md</code></td></tr>
+<tr><td>16 in-flight / 64 queue</td><td>32 / 128; unbounded</td><td>MiniLM single-threaded inference is the bottleneck at &gt;16 (Phase 1.5); 16 is the sweet spot</td><td>multi-agent eng review &sect;1.5</td></tr>
+<tr><td>Server-side limiter (not framework)</td><td>Hono rate-limit middleware; reverse proxy</td><td>Visibility into queue depth + per-tool fairness later</td><td>this scaffold</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Single global LRU (not per-tool)</td><td>Simpler; no thrashing across tools</td><td>retrieve_context can evict explain_rule cache</td><td>retrieve_context dominates traffic; explain_rule re-fills cheaply</td></tr>
+<tr><td>60s TTL means rule edits delayed by up to 60s</td><td>Predictable cache behavior</td><td>Authoring loop has perceived lag</td><td>Lever-c push <code>reindex(rule_id)</code> invalidates on save</td></tr>
+<tr><td>429 on overflow (not blocking)</td><td>Fast fail; caller decides retry</td><td>Caller must implement backoff</td><td>MCP clients already handle 429 idiomatically</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>context_hash LRU (<code>context-hash.ts</code>)</td><td><span class="pill s-good">implemented (102 LOC)</span></td><td>Includes scope-key invariant per repo rule</td></tr>
+<tr><td>Connection limiter (<code>connection-limiter.ts</code>)</td><td><span class="pill s-good">implemented (93 LOC)</span></td><td>16/64 semaphore + queue</td></tr>
+<tr><td>Single-flight</td><td><span class="pill s-warn">not built</span></td><td>Will become noticeable at &ge;20 concurrent same-context fans</td></tr>
+<tr><td>Per-token rate limit</td><td><span class="pill s-info">v2</span></td><td>v1 single-user; revisit at v2 multi-user</td></tr>
+<tr><td>Unit tests (<code>cache.test.ts</code>)</td><td><span class="pill s-warn">authored, not yet run</span></td><td>Hit/miss, LRU eviction, scope-key invariant</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: cache &middot; tier: Core &middot; updated: 2026-06-09</div>
+</div></body></html>

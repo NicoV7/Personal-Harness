@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# BetterAI pre-commit: auto-stamp component docs with the staged commit context.
+# Install once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Skip if no node available (don't block the commit; warn).
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found; skipping docs stamp" >&2
+  exit 0
+fi
+
+# Skip on merge commits / amends that wouldn't make sense to re-stamp.
+if [ -f "$REPO_ROOT/.git/MERGE_HEAD" ]; then
+  echo "pre-commit: merge in progress, skipping docs stamp" >&2
+  exit 0
+fi
+
+# Run the stamper. It re-stages any modified docs/components/*.html itself.
+node scripts/update-component-docs.mjs pre-commit || {
+  echo "pre-commit: docs stamper failed; continuing commit without stamp" >&2
+}
+
+exit 0

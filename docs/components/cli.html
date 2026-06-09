@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · cli</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; cli</div>
+<h1>cli &mdash; 7 verbs for authoring + dogfooding</h1>
+<p class="meta-row">Tier: Operator &middot; Files: <code>src/cli/{main,init,validate,status,why,replay,gate,new}.ts</code> + <code>src/cli/_shared/{frontmatter,repo-root}.ts</code> + <code>bin/betterai</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">7 verbs designed to make BetterAI usable without leaving the terminal. <strong>Read-only verbs (validate, status --offline, why --offline) work without the container running</strong> &mdash; they read <code>~/.betterai/</code> directly from disk. Per the BetterAI repo rule <code>cli-read-ops-work-offline</code>.</p>
+
+<h2>The 7 verbs</h2>
+<table><thead><tr><th>Verb</th><th>Purpose</th><th>Needs container?</th><th>Source</th></tr></thead><tbody>
+<tr><td><code>betterai init [--seed]</code></td><td>Scaffold <code>~/.betterai/</code>; copy seed corpus from <code>/opt/betterai/seed-corpus</code>; drop welcome task</td><td><span class="pill s-warn">yes (run inside container)</span></td><td><code>init.ts</code></td></tr>
+<tr><td><code>betterai validate</code></td><td>Schema-validate global AND repo corpora</td><td><span class="pill s-good">NO (offline)</span></td><td><code>validate.ts</code></td></tr>
+<tr><td><code>betterai status [--offline]</code></td><td>Show counts + recent activity; <code>--offline</code> reads disk only</td><td><span class="pill s-info">partial (offline mode = no)</span></td><td><code>status.ts</code></td></tr>
+<tr><td><code>betterai why &lt;task&gt; [--context &lt;path&gt;]</code></td><td>Simulate retrieve_context against a hand-given context; explain routing</td><td><span class="pill s-warn">yes (uses MCP)</span></td><td><code>why.ts</code></td></tr>
+<tr><td><code>betterai replay --since 7d</code></td><td>Weekly audit-log digest: fires + missed + behavior changes</td><td><span class="pill s-good">NO (reads audit JSONL)</span></td><td><code>replay.ts</code></td></tr>
+<tr><td><code>betterai gate --week N</code></td><td>Self-verify Phase 1.0 dogfooding criteria (&ge;5 fires &times; &ge;3 behavior changes &times; 5 days)</td><td><span class="pill s-good">NO (audit JSONL)</span></td><td><code>gate.ts</code></td></tr>
+<tr><td><code>betterai new {rule,skill,memory} [--scope repo|global]</code></td><td>Scaffold a new file with frontmatter pre-stubbed</td><td><span class="pill s-good">NO (writes file)</span></td><td><code>new.ts</code></td></tr>
+</tbody></table>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Path traversal in <code>--context</code> / file args</td><td>CLI reads arbitrary files</td><td>Resolve realpath; require under cwd OR explicit confirmation</td><td><code>why.ts</code> + <code>validate.ts</code></td><td><span class="pill s-warn">not enforced</span></td></tr>
+<tr><td>Bearer token in env logs</td><td>CLI passes token via env; ps shows it</td><td>CLI reads token from ~/.betterai/token directly; never env-passes</td><td><code>main.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td><code>betterai new</code> writes outside corpus root</td><td>id field with path traversal</td><td>id validated kebab-case; path constructed server-side; final path check</td><td><code>new.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Shell injection in <code>why</code> arg</td><td>Task description piped to shell</td><td>Args are read as-is, never shelled out</td><td><code>why.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Container down + verb needs container</td><td>Error: &ldquo;container not running; try <code>docker compose up -d</code> or use <code>--offline</code>&rdquo;</td><td><code>cli-offline.test.ts</code></td><td><span class="pill s-bad">FAIL: build issue</span></td></tr>
+<tr><td>Read ops with container down</td><td>Work transparently from disk</td><td><code>cli-offline.test.ts</code></td><td><span class="pill s-bad">FAIL: same</span></td></tr>
+<tr><td>Invalid frontmatter on <code>new</code></td><td>Re-prompt or write with [VALIDATE-FAIL] sentinel; <code>betterai validate</code> catches</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>gate --week with insufficient audit data</td><td>Report &ldquo;need N more days of data&rdquo;; don't synthesize</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>replay with corrupted JSONL line</td><td>Skip line + warn; continue</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>cli-offline tests fail at exec time</td><td>tsx/CJS path or missing build step; CLI can&rsquo;t boot in test env</td><td>S (vitest config + tsx wiring)</td><td><span class="pill s-bad">P1 (blocks 3 tests)</span></td></tr>
+<tr><td>strictness fallout: noPropertyAccessFromIndexSignature in CLI files</td><td>tsconfig too strict for the YAML / JSON parsing CLI does</td><td>S (relax tsconfig OR refactor 4 CLI files)</td><td><span class="pill s-warn">P1 (part of strictness sweep)</span></td></tr>
+<tr><td>No interactive scaffolder for <code>new</code></td><td>User has to know all frontmatter fields up front</td><td>M (TUI prompts)</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No <code>betterai upgrade</code> verb</td><td>Corpus schema migration is manual</td><td>S (TD-D8)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No <code>betterai logs</code> shortcut</td><td>User has to know <code>docker logs betterai</code></td><td>XS (one-liner)</td><td><span class="pill s-mut">P3</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>7 verbs, single-word imperatives</td><td>Sub-commands (<code>betterai rule new</code>); flags-only CLI</td><td>kubectl/gh-style discoverability; <code>--help</code> per verb</td><td>DX review DX-FIX-5</td></tr>
+<tr><td>Read ops work offline</td><td>All ops go through MCP</td><td>BetterAI repo rule <code>cli-read-ops-work-offline</code>; authoring loop friction</td><td><code>.betterai/rules/STANDARDS/maintainability/cli-read-ops-work-offline.md</code></td></tr>
+<tr><td>Default scope on <code>new</code> = repo if in git repo</td><td>Default global; always ask</td><td>Most authoring is repo-specific; opt-out via <code>--scope global</code></td><td>v4.1 &sect;7</td></tr>
+<tr><td>betterai gate is self-running (not a CI check)</td><td>CI job</td><td>Personal toolkit; user runs it when they want the answer</td><td>DX review DX-FIX-19</td></tr>
+<tr><td><code>bin/betterai</code> is a shell shim, not a binary</td><td>pkg-build native; tsx-only</td><td>One shim that execs node; works with any install; no platform builds</td><td>simplicity</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>7 verbs, flat</td><td>Discoverable; one help screen</td><td>Verb space is a finite resource</td><td>Each verb earns its slot; deprecate ruthlessly</td></tr>
+<tr><td>Offline-first read ops</td><td>Snappy authoring loop</td><td>Two code paths to maintain</td><td>Validator + reader are shared with the server</td></tr>
+<tr><td>Default scope = repo</td><td>Right answer 80%+ of the time</td><td>Surprises the user authoring a global rule first time</td><td><code>--scope global</code> + help text + warning on first repo-scope write</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>main.ts + 7 verb files</td><td><span class="pill s-good">implemented (~1.2k LOC)</span></td><td>10 TS files in src/cli/</td></tr>
+<tr><td>_shared (frontmatter, repo-root helpers)</td><td><span class="pill s-good">implemented</span></td><td>Reused across verbs</td></tr>
+<tr><td>bin/betterai shim</td><td><span class="pill s-good">executable (582 bytes)</span></td><td>Routes to <code>node dist/cli/main.js</code></td></tr>
+<tr><td>cli-offline.test.ts</td><td><span class="pill s-bad">3/3 FAIL</span></td><td>tsx/CJS path or missing build; fix in Wave 5</td></tr>
+<tr><td>Strictness errors in CLI files</td><td><span class="pill s-warn">~40 errors</span></td><td>Part of the 247 typecheck errors; mostly index-signature access</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: cli &middot; tier: Operator &middot; updated: 2026-06-09</div>
+</div></body></html>

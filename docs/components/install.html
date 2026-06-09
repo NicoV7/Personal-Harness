@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · install</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; install</div>
+<h1>install &mdash; one-command setup + welcome task + Docker</h1>
+<p class="meta-row">Tier: Operator &middot; Files: <code>install.sh</code> &middot; <code>Dockerfile</code> &middot; <code>docker-compose.yml</code> &middot; <code>seed-corpus/welcome-task/</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Idempotent <code>install.sh</code> brings BetterAI from <code>git clone</code> to first magical moment in &lt;5 min. Target: Competitive tier (per DX review). Prompts the user once for lever-a (CLAUDE.md preamble, default-yes) and once for lever-c (auto-trigger skill file, default-no).</p>
+
+<h2>install.sh steps (idempotent)</h2>
+<table><thead><tr><th>#</th><th>Action</th><th>Idempotent?</th><th>Notes</th></tr></thead><tbody>
+<tr><td>1</td><td>Pre-flight: check docker installed</td><td><span class="pill s-good">yes</span></td><td>Fail fast with install link</td></tr>
+<tr><td>2</td><td>Scaffold <code>~/.betterai/{rules,skills,memories,audit,embeddings,token}</code></td><td><span class="pill s-good">yes</span></td><td><code>mkdir -p</code></td></tr>
+<tr><td>3</td><td>Download docker-compose.yml from pinned release URL</td><td><span class="pill s-good">yes</span></td><td>Overwrite-with-confirm if exists + differs</td></tr>
+<tr><td>4</td><td>Substitute <code>${UID}</code>/<code>${GID}</code> from host into compose</td><td><span class="pill s-good">yes</span></td><td>via <code>.env</code> file in <code>~/.betterai/</code></td></tr>
+<tr><td>5</td><td>Generate 32-byte token; write <code>~/.betterai/token</code> mode 0600</td><td><span class="pill s-warn">yes (skips if exists)</span></td><td>Use <code>--rotate-token</code> to force</td></tr>
+<tr><td>6</td><td><code>docker compose -f ~/.betterai/docker-compose.yml up -d</code></td><td><span class="pill s-good">yes</span></td><td>SHA-pinned image (never <code>:latest</code>)</td></tr>
+<tr><td>7</td><td>Wait for /health (bearer required)</td><td><span class="pill s-good">yes</span></td><td>30s timeout</td></tr>
+<tr><td>8</td><td><code>docker exec betterai betterai init --seed</code></td><td><span class="pill s-good">yes</span></td><td>Drops 23 starter rules + 5 skills + 5 memories</td></tr>
+<tr><td>9</td><td>Prompt: append CLAUDE.md preamble (lever-a, default-yes)</td><td><span class="pill s-good">yes (idempotent line append)</span></td><td>Tagged with sentinel comment for re-detection</td></tr>
+<tr><td>10</td><td>Prompt: install auto-trigger skill (lever-c, default-no)</td><td><span class="pill s-good">yes</span></td><td>Writes to <code>~/.claude/skills/betterai-auto-retrieve/SKILL.md</code></td></tr>
+<tr><td>11</td><td>Print: MCP config snippet + welcome task command + <code>betterai status</code></td><td>n/a</td><td>Final user output</td></tr>
+</tbody></table>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>SHA-pinned image (no <code>:latest</code>)</td><td>Silent image swap changes retrieval behavior</td><td>install.sh writes <code>BETTERAI_IMAGE_SHA</code> to .env; compose interpolates</td><td><code>install.sh</code> + <code>docker-compose.yml</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Token file mode 0600</td><td>Other users on host read token</td><td><code>install.sh</code> chmod 0600 after write</td><td><code>install.sh</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>curl install.sh from untrusted host</td><td>MitM during install</td><td>Document HTTPS-only; show SHA256 of release tarball; <code>--no-curl</code> option to use checked-out repo</td><td><code>install.sh</code></td><td><span class="pill s-warn">documented</span></td></tr>
+<tr><td>CLAUDE.md preamble line injection</td><td>Compromised install.sh adds malicious system prompt</td><td>The preamble line is fixed text; sentinel comment lets re-runs detect/refuse to duplicate</td><td><code>install.sh</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Container runs as root</td><td>Audit JSONL written as root; host user can&rsquo;t read</td><td><code>user: "${UID}:${GID}"</code> in compose; <code>install.sh</code> interpolates</td><td><code>docker-compose.yml</code></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Docker daemon not running</td><td>Pre-flight check; clear error message + start-docker hint</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Port 7777 in use</td><td>Detect via <code>lsof -i :7777</code> in pre-flight; suggest port override</td><td>&mdash;</td><td><span class="pill s-warn">not implemented</span></td></tr>
+<tr><td>Compose download fails (offline)</td><td>Fallback to local docker-compose.yml in cloned repo</td><td>&mdash;</td><td><span class="pill s-warn">documented</span></td></tr>
+<tr><td>Healthcheck times out</td><td>Show <code>docker logs betterai</code> tail + suggest <code>docker compose up -d --build</code></td><td>&mdash;</td><td><span class="pill s-warn">basic only</span></td></tr>
+<tr><td>Re-run after partial failure</td><td>Each step checks current state and skips if done</td><td>&mdash;</td><td><span class="pill s-good">idempotent by design</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>install.sh is bash, not POSIX sh</td><td>Won&rsquo;t run on dash / busybox</td><td>S (refactor to posix)</td><td><span class="pill s-mut">P3 (macOS/Linux only in v1)</span></td></tr>
+<tr><td>No <code>uninstall.sh</code></td><td>Manual rm + docker compose down</td><td>XS</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No Windows-WSL handling</td><td>Path translation differs on WSL2</td><td>M (Phase 1.5)</td><td><span class="pill s-info">Phase 1.5</span></td></tr>
+<tr><td>No checksum verification of pulled compose / image</td><td>MitM resistance is documented but not enforced</td><td>S</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>Welcome task is one file (no progression)</td><td>Future expansion to multi-step guided tour</td><td>M (tutorial framework)</td><td><span class="pill s-mut">P3</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>install.sh in Phase 1.0 (not 1.5)</td><td>Document <code>git clone + docker compose up</code></td><td>TTHW gate; 3 manual steps &rarr; 1 command. DX review DX-FIX-2.</td><td>DX review</td></tr>
+<tr><td>Welcome task in seed corpus (bundled in image)</td><td>Repo-hosted URL</td><td>Works offline; SHA-pinned with image</td><td>v4.1 unresolved &sect;1 auto-decided</td></tr>
+<tr><td>Lever-a (CLAUDE.md preamble) default-yes</td><td>Default-no; always-yes</td><td>Vast majority will want it; opt-out for advanced users</td><td>DX review DX-FIX-3</td></tr>
+<tr><td>Lever-c (auto-trigger skill) default-no</td><td>Default-yes</td><td>Skill file modifies user&rsquo;s ~/.claude/; ask first</td><td>multi-agent eng review &sect;1.6</td></tr>
+<tr><td>Container runs as host user (UID/GID interpolation)</td><td>Root in container; permission fix-up post-hoc</td><td>Audit JSONL host-readable; no chown dance</td><td>v4 design CRIT fix</td></tr>
+<tr><td>Healthcheck uses <code>node -e "fetch(...)"</code> (not curl)</td><td>curl; wget</td><td>Slim image has no extra binaries; node is already there</td><td>v4 design</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>install.sh forward to Phase 1.0</td><td>TTHW &lt;5min</td><td>4 hours of work brought in early</td><td>Magical moment compounds; rest of v1 is more valuable with a fast install</td></tr>
+<tr><td>Welcome task in image (not repo)</td><td>Works offline post-install</td><td>Updates require new image release</td><td>Welcome task is stable; v2 fetches updates separately</td></tr>
+<tr><td>One-line CLAUDE.md preamble</td><td>Easy to add/remove</td><td>Some users won&rsquo;t want it but won&rsquo;t opt out</td><td>Sentinel makes it removable; status shows it</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>install.sh</code></td><td><span class="pill s-good">authored (executable)</span></td><td>All 11 steps stubbed; needs end-to-end test</td></tr>
+<tr><td><code>Dockerfile</code></td><td><span class="pill s-good">implemented (54 lines)</span></td><td>Multi-stage; non-root 1000:1000</td></tr>
+<tr><td><code>docker-compose.yml</code></td><td><span class="pill s-good">implemented (71 lines)</span></td><td>5 mounts + SHA-pinned + healthcheck</td></tr>
+<tr><td><code>seed-corpus/welcome-task/README.md</code></td><td><span class="pill s-good">authored (~30 lines)</span></td><td>Deliberately rule-triggering Stripe webhook prompt</td></tr>
+<tr><td>install.sh end-to-end test</td><td><span class="pill s-warn">not built</span></td><td>Would require Docker-in-CI</td></tr>
+<tr><td>TTHW measured</td><td><span class="pill s-info">target: &lt;5min</span></td><td>Phase 1.0 dogfooding gate measures real TTHW</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: install &middot; tier: Operator &middot; updated: 2026-06-09</div>
+</div></body></html>

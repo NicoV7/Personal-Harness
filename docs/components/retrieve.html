@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · retrieve</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; retrieve</div>
+<h1>retrieve &mdash; domain router + dual-scope merger + grep</h1>
+<p class="meta-row">Tier: Core &middot; Files: <code>src/server/retrieve/{index,router,grep}.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Two-stage retrieval: domain-router YAML decides which sub-corpora to query for a given context; per-domain grep matches <code>applies_when.paths</code> + <code>applies_when.symbols</code>. Runs once over global, once over repo, merges with id-collision override. Ranks by severity &times; match &times; recency. Caps at 12 rules / 4 skills / 4 memories.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Cross-scope cache poisoning</td><td>Agent in repo X gets repo Y&rsquo;s rules</td><td><code>context_hash</code> includes <code>repo_root_detected</code> + <code>scopes_queried</code></td><td><code>index.ts</code> + <code>cache</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Glob ReDoS via <code>applies_when.paths</code></td><td>Malicious rule matches huge file tree slowly</td><td>Use <code>picomatch</code>-style linear matcher; cap path tests per call at 10k</td><td><code>router.ts</code></td><td><span class="pill s-warn">cap not enforced</span></td></tr>
+<tr><td>Symbol grep injection</td><td>Symbol contains regex metacharacters</td><td>Symbols are matched as literal substrings (no regex)</td><td><code>grep.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Information leak via overrides</td><td>Repo rule's existence reveals proprietary patterns to agents</td><td>Audit log records <code>overridden_global_ids</code> for visibility; agent only sees the repo version</td><td><code>index.ts</code> + <code>audit</code></td><td><span class="pill s-good">visible in audit</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Domain not in <code>domain-router.yaml</code></td><td>Warning at boot; falls to <code>defaults.domains</code></td><td><code>retrieve-context.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Context with empty <code>file_paths</code> AND empty <code>intent</code></td><td>Returns defaults.domains; never empty</td><td><code>retrieve-context.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Repo corpus missing (no <code>.betterai/</code>)</td><td>Skip repo pass; only query global; <code>scopes_queried: ['global']</code></td><td><code>scope-detection.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Both corpora return zero matches</td><td>Returns empty arrays; not an error</td><td><code>retrieve-context.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>YAML parse error in router</td><td>Server boot fails fast with file + line</td><td>&mdash;</td><td><span class="pill s-warn">no test yet</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>Grep-only (no embeddings)</td><td>Won&rsquo;t surface semantically similar rules</td><td>L (Phase 1.5: MiniLM + sqlite-vec)</td><td><span class="pill s-info">deferred to 1.5</span></td></tr>
+<tr><td>Ranking formula hand-tuned</td><td>severity&times;match&times;recency is a guess</td><td>M (telemetry-driven tune in Phase 3)</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>Hand-rolled YAML in router</td><td>Shared with corpus; same swap</td><td>S</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No per-domain rate limit</td><td>One huge domain could starve others</td><td>S (token bucket per domain)</td><td><span class="pill s-mut">P3 (small corpus)</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>Dual-pass retrieval (global, then repo)</td><td>Single pass over a merged corpus on disk</td><td>Separate audit trails per scope; repo-detection adds latency, run only if a repo exists</td><td>v4.1 &sect;4</td></tr>
+<tr><td>ID-collision override (repo wins, global dropped from response)</td><td>Merge frontmatter; show both; prefer most-recent</td><td>Predictable; agent never has to reason about &ldquo;which version applies&rdquo;</td><td>v4.1 &sect;3</td></tr>
+<tr><td>Domain router as YAML config (not code)</td><td>Hardcoded routing; per-rule routing hints in frontmatter</td><td>Tunable without redeploy; humans can read it</td><td>v4 design</td></tr>
+<tr><td>Cap at 12 rules + 4 skills + 4 memories</td><td>Cap by token count; uncapped</td><td>Bounded context budget for agent; truncate by rank</td><td>v4 design</td></tr>
+<tr><td>Hint &ldquo;ALWAYS call retrieve_context as your first action&rdquo; in tool description</td><td>System-prompt-only; server enforcement</td><td>Lever-a covers main loop; this catches Workflow agents whose orchestrator forgot the directive</td><td>DX review DX-FIX-8</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Override silently drops global (no merge)</td><td>No ambiguity</td><td>Repo author loses global rule's text unless they copy it</td><td>Most overrides are total replacements anyway; <code>betterai why</code> can show what was dropped</td></tr>
+<tr><td>Caps applied AFTER merge</td><td>Bias toward overrides showing first</td><td>Could mask interesting global rules at the tail</td><td>Repo authoring is opt-in; if you override, you accept the cap math</td></tr>
+<tr><td>One ranking formula across domains</td><td>Simple, predictable</td><td>Misses domain-specific quality signals</td><td>Domain-aware ranking needs telemetry we won't have until dogfooding</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>Orchestrator (<code>index.ts</code>)</td><td><span class="pill s-good">implemented (348 LOC)</span></td><td>Dual-scope merge, override semantics, ranking</td></tr>
+<tr><td>Router (<code>router.ts</code>)</td><td><span class="pill s-good">implemented (322 LOC)</span></td><td>YAML parse + glob/intent matchers</td></tr>
+<tr><td>Grep (<code>grep.ts</code>)</td><td><span class="pill s-good">implemented (222 LOC)</span></td><td>Literal symbol + glob path matching</td></tr>
+<tr><td>Embeddings backend</td><td><span class="pill s-info">deferred</span></td><td>Phase 1.5</td></tr>
+<tr><td>Retrieval test fixtures</td><td><span class="pill s-warn">authored, not yet run</span></td><td>Wave 4 test runner pending</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: retrieve &middot; tier: Core &middot; updated: 2026-06-09</div>
+</div></body></html>

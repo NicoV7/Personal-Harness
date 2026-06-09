@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · audit</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; audit</div>
+<h1>audit &mdash; JSONL append-only + missed-retrieval lever-b</h1>
+<p class="meta-row">Tier: Core &middot; Files: <code>src/server/audit/{jsonl,missed-retrieval}.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">One JSONL event per MCP tool call. Schema includes <code>parent_agent_session_id</code>, <code>subagent_class</code>, <code>repo_root_detected</code>, <code>scopes_queried</code>, per-item scope, <code>overridden_global_ids</code>. Rotation at 100&nbsp;MB or 30 days. Lever-b: emit <code>missed_retrieval</code> warning when a code-writing tool fires without a prior <code>retrieve_context</code> in the same session.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Sensitive context in audit log</td><td>Project code snippets in <code>recent_diff</code> field leak to disk</td><td>Audit log is mode 0600, host-user-owned (UID/GID compose); v2 scrubs secrets via regex</td><td><code>jsonl.ts</code></td><td><span class="pill s-warn">v2 scrub planned</span></td></tr>
+<tr><td>Log injection via field values</td><td>Agent embeds newline in <code>intent</code> field forging events</td><td>JSON.stringify escapes newlines; each line is a single valid JSON object</td><td><code>jsonl.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Disk exhaustion via flood</td><td>Attacker writes 100 GB of audit events</td><td>Rotation at 100&nbsp;MB; per-token rate limit at the limiter (deferred)</td><td><code>jsonl.ts</code> + <code>cache</code></td><td><span class="pill s-warn">rate limit deferred</span></td></tr>
+<tr><td>Bearer bypass on /health logs IP + UA</td><td>Stealth scan from same-host malware</td><td>Bypass emits <code>health_bypass</code> event with source IP + UA; visible in <code>betterai status</code></td><td><code>auth</code> + <code>jsonl.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Audit event with <code>subagent_class != main</code> AND null <code>parent_agent_session_id</code></td><td><code>AuditValidationError</code> thrown; single chokepoint in <code>JsonlAuditWriter.append()</code></td><td><code>audit-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Disk full during append</td><td>fs.appendFile throws ENOSPC; tool returns 503; alarm-level log</td><td>&mdash;</td><td><span class="pill s-warn">no chaos test</span></td></tr>
+<tr><td>Rotation during in-flight writes</td><td>Atomic rename + open new fd; in-flight writes either land in old or new file (never split)</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Schema violation in audit emission code</td><td>Validator throws; event NOT written; server log records the bug</td><td><code>audit-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Missed-retrieval detector false-positive</td><td>Session-id collision yields false miss</td><td>Session-id derived from MCP request metadata; fallback UUID if absent</td><td><span class="pill s-warn">edge case</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>JSONL writer is synchronous fs.appendFile</td><td>Blocks event loop for &ge;1ms at 100&nbsp;MB</td><td>S (buffered async writer)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No secrets scrub in v1</td><td><code>recent_diff</code> can contain API keys</td><td>M (regex + denylist)</td><td><span class="pill s-warn">P2 (single-user low-risk)</span></td></tr>
+<tr><td>Rotation by size OR time (not both)</td><td>30-day-old 10&nbsp;MB log still rotates; chatty 100&nbsp;MB log of yesterday too</td><td>S</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>v2 self-learning <code>downstream_*</code> fields reserved but no analyzer</td><td>Reserved schema; consumer doesn&rsquo;t exist</td><td>L (v2 work)</td><td><span class="pill s-info">v2</span></td></tr>
+<tr><td>No structured search over audit log</td><td><code>betterai replay</code> grep-only; large logs slow</td><td>M (sqlite index)</td><td><span class="pill s-mut">P3</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>JSONL on disk (not SQLite)</td><td>SQLite; ClickHouse; remote OTel</td><td>One file, append-only, grep-readable; matches &ldquo;personal toolkit&rdquo; framing</td><td>v4 design</td></tr>
+<tr><td>Schema locked v1 with reserved <code>downstream_*</code> fields</td><td>Add fields when v2 needs them</td><td>v2 self-learning forces backward-incompatible migration; reserve up-front</td><td>v4 design &sect;Audit</td></tr>
+<tr><td>Add <code>parent_agent_session_id</code>, <code>subagent_class</code>, <code>retrieved_kinds</code></td><td>Workflow-level wrapping only</td><td>Per-workflow rule effectiveness needs per-call correlation</td><td>multi-agent eng review &sect;1.4 (was CRIT-3)</td></tr>
+<tr><td>Add <code>repo_root_detected</code>, <code>scopes_queried</code>, per-item <code>scope</code>, <code>overridden_global_ids</code></td><td>None</td><td>v4.1 scoping requires audit-level visibility into scope choices</td><td>v4.1 &sect;6</td></tr>
+<tr><td>Lever-b (missed_retrieval) as audit event, not error</td><td>Hard error; client warning</td><td>Honest signal without blocking; surfaces in <code>betterai replay</code></td><td>multi-agent eng review &sect;1.6</td></tr>
+<tr><td>Server-internal <code>log_application</code> (not MCP-exposed)</td><td>Agent voluntarily calls</td><td>No incentive for agent to log honestly; auto-log on every retrieve</td><td>v4 design</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Sync writes for atomicity</td><td>Never lose an event</td><td>Latency hit at high QPS</td><td>v1 QPS is low; revisit if profile shows blocking</td></tr>
+<tr><td>One file per machine (no per-project shard)</td><td>Single source of truth</td><td>Cross-project correlation requires search</td><td><code>betterai replay --project &lt;slug&gt;</code> filters by audit field</td></tr>
+<tr><td>missed_retrieval detected post-hoc (not pre-write)</td><td>Doesn&rsquo;t block writes</td><td>Misses still happen; just visible later</td><td>The honest answer; lever-a + lever-c are the prevention layer</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>JSONL writer (<code>jsonl.ts</code>)</td><td><span class="pill s-good">implemented (146 LOC)</span></td><td>Rotation, validation chokepoint</td></tr>
+<tr><td>Missed-retrieval (<code>missed-retrieval.ts</code>)</td><td><span class="pill s-good">implemented (137 LOC)</span></td><td>Session-keyed detection of code-writing tool calls</td></tr>
+<tr><td>Validator (single chokepoint)</td><td><span class="pill s-good">implemented</span></td><td>Rejects subagent events with null parent_session_id</td></tr>
+<tr><td>Schema test (<code>audit-schema.test.ts</code>)</td><td><span class="pill s-warn">authored, not yet run</span></td><td>5+ test cases</td></tr>
+<tr><td>Secrets scrub</td><td><span class="pill s-info">v2</span></td><td>Documented limit for v1</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: audit &middot; tier: Core &middot; updated: 2026-06-09</div>
+</div></body></html>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · corpus</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; corpus</div>
+<h1>corpus &mdash; rule/skill/memory storage + Zod reader</h1>
+<p class="meta-row">Tier: Storage &middot; Files: <code>src/server/corpus/reader.ts</code> &middot; <code>rules/</code> &middot; <code>skills/</code> &middot; <code>memories/</code> &middot; <code>.betterai/</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Markdown-on-disk corpus. Two scopes: global (<code>~/.betterai/</code>) and repo (<code>&lt;repo-root&gt;/.betterai/</code>). Reader parses frontmatter + body, validates with Zod, applies id-collision override at load time (repo wins). Boot-time validation is the contract that lets agents trust the response.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Path traversal from <code>file_paths</code></td><td>Agent passes <code>../../etc/passwd</code></td><td>Reader only reads paths under BETTERAI_CORPUS_ROOT / BETTERAI_PROJECTS_ROOT; resolved + checked against prefix</td><td><code>reader.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>YAML parser injection</td><td>Malicious frontmatter executes code</td><td>Hand-rolled minimal YAML; no eval; no tags; rejects unknown keys via Zod</td><td><code>reader.ts</code></td><td><span class="pill s-warn">low risk</span></td></tr>
+<tr><td>Repo corpus secrets leak</td><td>A repo's <code>.betterai/</code> contains tokens; container reads them</td><td>Reader strips frontmatter values whose key matches <code>/secret|token|key/i</code> with a warning; rule body shouldn't carry secrets by convention</td><td><code>reader.ts</code></td><td><span class="pill s-warn">documented, not yet implemented</span></td></tr>
+<tr><td>Symlink escape</td><td>Symlinked file points outside corpus root</td><td>Reader uses <code>realpath</code> and re-checks prefix</td><td><code>reader.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Rule file missing required frontmatter</td><td>Zod rejects; loader logs error + skips file; other rules continue</td><td><code>rule-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Duplicate <code>id</code> within same scope</td><td>Validator fails; <code>betterai validate</code> errors</td><td><code>rule-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Same <code>id</code> across scopes (override)</td><td>Repo wins silently; global dropped; <code>overridden_global_ids</code> in audit</td><td><code>retrieve-context.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Body missing required H2 section</td><td>Zod rejects; loader skips</td><td><code>rule-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Concurrent file change mid-read</td><td>Eventual consistency via 5s fs-watch + VSCode push <code>reindex(rule_id)</code></td><td>&mdash;</td><td><span class="pill s-info">v1.5</span></td></tr>
+<tr><td>Memory shard directory grows unbounded</td><td>Date-sharded by yyyy-mm; archive to <code>memories/_archive/</code> after 12 months</td><td>&mdash;</td><td><span class="pill s-warn">archive job not built</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it's debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>Hand-rolled minimal YAML parser</td><td>Brittle on edge cases (multiline strings, quoted scalars)</td><td>S (swap to <code>yaml</code> npm pkg)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No file mtime cache on frontmatter parse</td><td>Re-parses every rule on every boot</td><td>S (LRU keyed by mtime)</td><td><span class="pill s-mut">P3 (small corpus)</span></td></tr>
+<tr><td>No embeddings index (grep only)</td><td>Won't scale past 30 rules/domain</td><td>L (Phase 1.5)</td><td><span class="pill s-info">deferred to 1.5</span></td></tr>
+<tr><td>Repo corpus secrets stripping is documented, not implemented</td><td>Could leak repo-local tokens via explain_rule</td><td>S</td><td><span class="pill s-warn">P2</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>Frontmatter + 6 H2 body sections (locked schema)</td><td>Free-form prose; Cursor-style single string; JSON schema only</td><td>Agent-parsable structure + human-authorable. Required sections eliminate stub rules.</td><td>corpus eng review &sect;1.2</td></tr>
+<tr><td>Single home + <code>related:</code> (no symlinks)</td><td>Symlinks for cross-category rules</td><td>Docker bind-mount + macOS symlinks historically flaky</td><td>corpus eng review &sect;1.4</td></tr>
+<tr><td>Two scopes (global + repo), implicit from path</td><td>Explicit <code>scope:</code> frontmatter field</td><td>Scope is a property of WHERE the file lives, not WHAT it says. No schema change.</td><td>v4.1 design extension &sect;1</td></tr>
+<tr><td>ID-collision override (repo wins, global dropped)</td><td>Merge frontmatter; deep-merge body; alphabetical priority</td><td>Override is the natural shape for &ldquo;this rule is different HERE&rdquo;. Predictable; audit-visible.</td><td>v4.1 &sect;3</td></tr>
+<tr><td>Date-sharded memories (<code>yyyy-mm/</code>)</td><td>Flat directory; topic-sharded</td><td>Bounded directory size; cheap recency scoring</td><td>multi-agent eng review &sect;1.3</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Markdown-on-disk (not SQLite)</td><td>Version-controlled; PR-able; <code>grep</code>-able</td><td>Slow at 10k+ rules</td><td>Personal toolkit; rule count grows slowly</td></tr>
+<tr><td>Boot-time validation (not lazy)</td><td>Fail-fast on schema errors</td><td>Slow boot at 1000 rules (~5s)</td><td>v1 corpus is &lt;30 rules; revisit at 1.5</td></tr>
+<tr><td>Strip-on-warn for secrets vs reject</td><td>Imperfect rules still load</td><td>Possible leak window if not implemented</td><td>v1 trust boundary is single-user</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>Reader (<code>reader.ts</code>)</td><td><span class="pill s-good">implemented (519 LOC)</span></td><td>Zod schemas, dual-scope merge, override semantics</td></tr>
+<tr><td>Global seed corpus</td><td><span class="pill s-good">26 files seeded</span></td><td>13 rules + 5 skills + 5 memories + 3 _meta</td></tr>
+<tr><td>Repo seed corpus (BetterAI)</td><td><span class="pill s-good">5 rules seeded</span></td><td>security/observability/maintainability under <code>.betterai/rules/</code></td></tr>
+<tr><td>Schema validator suite</td><td><span class="pill s-warn">35 tests authored, not yet run</span></td><td>Wave 4 test runner pending</td></tr>
+<tr><td>Embeddings</td><td><span class="pill s-info">deferred</span></td><td>Phase 1.5; activates at &gt;30 rules/domain</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code> &rarr; <code>scripts/update-component-docs.mjs</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: corpus &middot; tier: Storage &middot; updated: 2026-06-09</div>
+</div></body></html>

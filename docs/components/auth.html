@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · auth</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; auth</div>
+<h1>auth &mdash; bearer middleware + DNS-rebinding guard</h1>
+<p class="meta-row">Tier: Edge &middot; Files: <code>src/server/auth/bearer.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Hono middleware on every <code>/mcp/*</code> route. Reads token from <code>BETTERAI_TOKEN_PATH</code> (mode 0600). Verifies <code>Authorization: Bearer &lt;token&gt;</code>. Rejects requests with <code>Host</code> header outside <code>127.0.0.1:7777</code> / <code>localhost:7777</code>. <code>/health</code> is the only allowlisted path &mdash; bypass emits an audit event with source IP + UA.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Missing bearer on a tool</td><td>Dev adds &ldquo;internal&rdquo; tool that skips middleware</td><td>BetterAI repo rule <code>mcp-tools-require-bearer</code>; middleware applied via <code>app.use("*", ...)</code> BEFORE any route; only <code>/health</code> allowlisted</td><td><code>bearer.ts</code> + <a href="mcp-tools.html">mcp-tools</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>DNS rebinding</td><td>Browser tab points <code>evil.com</code> &rarr; 127.0.0.1 &rarr; sends MCP request without CORS</td><td>Check <code>Host</code> header; reject if not 127.0.0.1:7777 or localhost:7777</td><td><code>bearer.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Token file leak</td><td>token file mode 0644</td><td>Install script sets 0600; container UID matches host; readable by user only</td><td><code>install.sh</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Token brute force</td><td>Attacker tries random bearer values</td><td>32 random bytes (256 bits); ~uniform; constant-time compare</td><td><code>bearer.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Timing attack on token compare</td><td>Char-by-char compare leaks token prefix</td><td>Use <code>crypto.timingSafeEqual</code></td><td><code>bearer.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>/health bypass abused for stealth scanning</td><td>Local malware probes /health to confirm server up</td><td>Bypass emits <code>health_bypass</code> audit event with source IP + UA; visible in <code>betterai status</code></td><td><code>bearer.ts</code> + <a href="audit.html">audit</a></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>Token file missing at boot</td><td>Fail fast with hint: &ldquo;run install.sh&rdquo;</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Token rotated mid-session</td><td>Server reloads token on every request (cheap); old token rejected at next call</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Authorization header malformed (no &ldquo;Bearer &rdquo; prefix)</td><td>Return 401; log auth_failure event</td><td><code>server-boot.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>Host header missing</td><td>Reject (most clients send it; missing is suspicious)</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Token file mode != 0600</td><td>Warning at boot (still loads; logs for user to fix)</td><td>&mdash;</td><td><span class="pill s-warn">not implemented</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>Re-reads token from disk on every request</td><td>Hot path I/O</td><td>S (in-memory cache + fs.watch invalidate)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No token rotation tool</td><td>Manual: edit file + restart</td><td>S (<code>betterai rotate-token</code>)</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No per-token scope (single token = root)</td><td>v1 single-user OK; v2 needs scoped tokens</td><td>L (token DB; v2)</td><td><span class="pill s-info">v2</span></td></tr>
+<tr><td>No rate limit on auth failures</td><td>Slow brute force still possible (impractical with 256-bit token)</td><td>S (counter + 429)</td><td><span class="pill s-mut">P3</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>Bearer token (not OAuth)</td><td>OAuth; mTLS; unix socket peer cred</td><td>Single-user; bearer is the lightest secure option; no IdP needed</td><td>v4 design CRIT fix</td></tr>
+<tr><td>Host header check</td><td>CORS preflight</td><td>MCP isn&rsquo;t a browser API; CORS doesn&rsquo;t help; Host is the only signal</td><td>v4 design</td></tr>
+<tr><td>/health bypass + audit</td><td>Require auth on /health</td><td>Docker healthcheck needs no-auth probe; audit makes the bypass visible</td><td>v4 design + Team B</td></tr>
+<tr><td>Re-read token on every request</td><td>Cache + watch</td><td>Simple; ~1 syscall; revisit if profile shows it</td><td>Team B simplicity-first</td></tr>
+<tr><td>timingSafeEqual</td><td>Strict equality</td><td>Standard practice; cheap</td><td>OWASP</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Single bearer token</td><td>Simple; one file</td><td>Lose token = full reset</td><td>Single-user; token rotation is one command</td></tr>
+<tr><td>/health bypass</td><td>Docker can probe; tunnels work</td><td>Stealth scan vector</td><td>Audit makes it visible; not silent</td></tr>
+<tr><td>Constant-time compare</td><td>Defense in depth</td><td>Slightly slower (microseconds)</td><td>Always worth it for auth</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>bearer.ts</td><td><span class="pill s-good">implemented (111 LOC)</span></td><td>Token + Host + audit on bypass</td></tr>
+<tr><td>Token rotation</td><td><span class="pill s-warn">manual</span></td><td>CLI verb deferred</td></tr>
+<tr><td>server-boot test</td><td><span class="pill s-good">passing (401 without bearer; 200 with)</span></td><td>Auth happy/sad paths covered</td></tr>
+<tr><td>Mode 0600 warning</td><td><span class="pill s-warn">not implemented</span></td><td>P2 cleanup</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: auth &middot; tier: Edge &middot; updated: 2026-06-09</div>
+</div></body></html>

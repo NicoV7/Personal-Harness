@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · scope</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; scope</div>
+<h1>scope &mdash; repo-root detection + dual-corpus discovery</h1>
+<p class="meta-row">Tier: Core &middot; Files: <code>src/server/scope/repo-detector.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Given a context&rsquo;s <code>file_paths</code>, walk up to the nearest <code>.git/</code>. If <code>&lt;repo-root&gt;/.betterai/</code> exists, that&rsquo;s the repo corpus. 60s mtime-keyed cache on <code>.git/HEAD</code> invalidates across branch switches. Output feeds <a href="retrieve.html">retrieve</a> + <a href="cache.html">cache</a> (key namespace) + <a href="audit.html">audit</a> (visibility).</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Path traversal during walkup</td><td>file_paths<code>=/Users/nicov/projects/../../etc</code></td><td>realpath + check against BETTERAI_PROJECTS_ROOT prefix; walkup capped at 20 levels</td><td><code>repo-detector.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>.git symlink redirect</td><td>Repo&rsquo;s .git points outside projects mount</td><td>Resolve symlinks; reject if target outside projects root</td><td><code>repo-detector.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Privilege confusion (writing to .betterai/ vs reading)</td><td>Server reads only via the read-only projects mount</td><td>Compose mount is <code>:ro</code>; reader fails fast on writes</td><td><code>docker-compose.yml</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Information leak via repo discovery</td><td>Audit logs which host paths exist as repos</td><td>Audit records <code>repo_root_detected</code> (host path); user-only readable; documented in security model</td><td><code>audit</code></td><td><span class="pill s-warn">documented</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>file_paths empty AND repo_root not provided</td><td>Return null; only global corpus queried</td><td><code>scope-detection.test.ts</code></td><td><span class="pill s-bad">FAIL: contract mismatch</span></td></tr>
+<tr><td>file_paths[0] not inside a git repo</td><td>Walk up to <code>/</code> or projects-root; return null</td><td><code>scope-detection.test.ts</code></td><td><span class="pill s-bad">FAIL: same contract mismatch</span></td></tr>
+<tr><td>.betterai/ is a file, not a directory</td><td>Treat as &ldquo;no repo corpus&rdquo;; log warning</td><td>&mdash;</td><td><span class="pill s-warn">documented limit</span></td></tr>
+<tr><td>Branch switch invalidates cache</td><td>mtime(.git/HEAD) keys the cache; flips on checkout</td><td>&mdash;</td><td><span class="pill s-warn">no chaos test</span></td></tr>
+<tr><td>Concurrent detection for same path</td><td>Single-flight inside the detector; first call fills, others await</td><td>&mdash;</td><td><span class="pill s-warn">not built</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td><strong>Contract mismatch with tests</strong></td><td>Team B shipped <code>class RepoDetector</code> with <code>detect()/detectFromBatch()</code> in <code>repo-detector.ts</code>; tests + mcp-tools call <code>detectRepoRoot(paths)</code> from <code>scope/detect.ts</code>. File name AND export shape differ.</td><td>S (add a thin function wrapper; rename file OR re-export)</td><td><span class="pill s-bad">P0 (blocks 3 tests + all retrieve tools)</span></td></tr>
+<tr><td>No single-flight on concurrent detection</td><td>5 subagents same context = 5 fs walkups</td><td>S</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>20-level walkup cap is hardcoded</td><td>Should be env var</td><td>XS</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No nested-repo handling (e.g., submodules)</td><td>Inner-most wins by default; could surprise</td><td>S (document, add test)</td><td><span class="pill s-mut">P3</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>Walk up to <code>.git/</code> (not <code>.betterai/</code>)</td><td>Walk up to .betterai/; explicit repo_root in context</td><td>.git is the universal repo marker; works for any project</td><td>v4.1 &sect;3</td></tr>
+<tr><td>60s mtime-keyed cache</td><td>No cache; longer TTL; LRU</td><td>Cheap invariant; survives mid-session branch switch</td><td>v4.1 &sect;3</td></tr>
+<tr><td>Nested-repo: inner-most wins</td><td>Outer-most; explicit selector</td><td>Matches mental model (&ldquo;the repo I&rsquo;m working in is the innermost containing .git&rdquo;)</td><td>v4.1 unresolved &sect;7 auto-decided</td></tr>
+<tr><td>Repo without .betterai/ falls through to global</td><td>Auto-scaffold .betterai/; error</td><td>Non-disruptive; opt-in adoption</td><td>v4.1 &sect;2</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>Server-side detection (not agent-supplied)</td><td>Agent can&rsquo;t lie about repo root</td><td>Server needs read access to the projects mount</td><td>Mount is already required for check_file</td></tr>
+<tr><td>60s cache</td><td>Cheap; survives branch switches</td><td>First mid-second branch switch sees stale</td><td>Worst case: 60s of mis-scoped retrievals; audit log shows which scope was used</td></tr>
+<tr><td>Walking the host filesystem inside the container</td><td>Uses real <code>.git</code> as truth</td><td>Bind-mount latency on macOS Docker Desktop</td><td>60s cache amortizes the slow walkup</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>RepoDetector class (<code>repo-detector.ts</code>)</td><td><span class="pill s-good">implemented (151 LOC)</span></td><td>detect() + detectFromBatch() + cache</td></tr>
+<tr><td>Test contract</td><td><span class="pill s-bad">mismatch</span></td><td>Tests call <code>detectRepoRoot(paths)</code> from <code>scope/detect.ts</code> &mdash; file + export don&rsquo;t exist. Fix in Wave 5.</td></tr>
+<tr><td>scope-detection.test.ts</td><td><span class="pill s-bad">3/3 FAIL</span></td><td>Same contract issue</td></tr>
+<tr><td>Single-flight</td><td><span class="pill s-warn">not built</span></td><td>P2 cleanup</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: scope &middot; tier: Core &middot; updated: 2026-06-09</div>
+</div></body></html>

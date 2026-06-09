@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · transport</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; transport</div>
+<h1>transport &mdash; Hono HTTP/SSE + MCP SDK adapter</h1>
+<p class="meta-row">Tier: Edge &middot; Files: <code>src/server/transport/http-sse.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">Hono app routes <code>/mcp</code> (POST) and <code>/health</code> (GET). The MCP SDK&rsquo;s <code>StreamableHttpServerTransport</code> wraps the request/response. Bound to <code>127.0.0.1:7777</code> (localhost only). <strong>Stdio transport is never registered &mdash; permanently forbidden</strong> per BetterAI&rsquo;s own repo rule.</p>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Stdio re-introduction</td><td>Future PR adds <code>registerStdioTransport</code>; subagents silently fail</td><td>BetterAI repo rule <code>no-stdio-mcp-transport</code>; comment in <code>main.ts</code> + <code>index.ts</code></td><td><code>.betterai/rules/STANDARDS/maintainability/no-stdio-mcp-transport.md</code></td><td><span class="pill s-good">documented + commented</span></td></tr>
+<tr><td>Non-localhost binding</td><td>Server exposed on 0.0.0.0; LAN access</td><td>Compose binds <code>127.0.0.1:7777:7777</code>; documented in install.sh</td><td><code>docker-compose.yml</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>DNS rebinding</td><td>Browser tab points <code>foo.betterai.evil.com</code> &rarr; 127.0.0.1</td><td>Auth middleware checks <code>Host</code> header is <code>127.0.0.1:7777</code> or <code>localhost:7777</code></td><td><a href="auth.html">auth</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Slowloris / read-timeout</td><td>Slow client holds connection forever</td><td>Hono default timeout (5s); review at v1.5</td><td><code>http-sse.ts</code></td><td><span class="pill s-warn">defaults only</span></td></tr>
+<tr><td>Request body size DOS</td><td>Agent sends 100&nbsp;MB recent_diff</td><td>Hono body limiter (1&nbsp;MB v1); explicit middleware</td><td><code>http-sse.ts</code></td><td><span class="pill s-warn">not yet configured</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>MCP SDK transport shape changes</td><td>Documented stub; <code>dispatchMcpRequest</code> shim isolates breakage</td><td>&mdash;</td><td><span class="pill s-warn">SDK 1.0 pending</span></td></tr>
+<tr><td>SSE connection drops mid-stream</td><td>Client reconnects with last-event-id; server stateless on resume</td><td>&mdash;</td><td><span class="pill s-warn">not tested</span></td></tr>
+<tr><td>Port 7777 already in use</td><td>Boot fails fast with helpful error</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>Concurrent SSE streams overflow file descriptors</td><td>OS ulimit; container-side limit via ulimits in compose</td><td>&mdash;</td><td><span class="pill s-warn">not configured</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td>MCP SDK shim (<code>dispatchMcpRequest</code> casts <code>anyServer.tool</code>)</td><td>SDK ^1.0 shape was non-final at scaffold time</td><td>S (drop shim once SDK locks)</td><td><span class="pill s-warn">P2 (track SDK release)</span></td></tr>
+<tr><td>Hono body limit not explicit</td><td>Default may shift; DOS surface</td><td>XS (one middleware call)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>No request timeout configured</td><td>Hono defaults may not cover long-running grep</td><td>XS</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No metrics endpoint</td><td>Can&rsquo;t observe queue depth, cache hit rate</td><td>S (Hono <code>/metrics</code>)</td><td><span class="pill s-mut">P3 (deferred to Phase 3 obs)</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>HTTP/SSE only (no stdio)</td><td>Stdio for CLI; dual transport</td><td>Stdio doesn&rsquo;t propagate to subagents; multi-agent eng review CRIT-1</td><td>multi-agent eng review &sect;1.5</td></tr>
+<tr><td>Hono framework</td><td>Express; Fastify; raw Node http</td><td>2026 default for MCP servers; light; edge-friendly; minimal deps</td><td>WebSearch context</td></tr>
+<tr><td>Bind 127.0.0.1 only</td><td>0.0.0.0 + firewall; unix socket</td><td>Single-user; localhost is the smallest attack surface</td><td>v4 design</td></tr>
+<tr><td>MCP SDK adapter as shim, not direct</td><td>Direct SDK invocation</td><td>SDK ^1.0 shape was non-final; shim isolates churn</td><td>Team B notes</td></tr>
+<tr><td>Same port serves both /mcp and /health</td><td>Separate health port</td><td>Simpler compose; bearer-bypass on /health is the only auth allowlist</td><td>v4 design</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>SDK shim isolates SDK churn</td><td>Survives ^1.x breaking changes</td><td>Extra indirection; one more place to read code</td><td>SDK isn&rsquo;t stable; shim is the cost of going early</td></tr>
+<tr><td>localhost-only in v1</td><td>Smallest attack surface</td><td>claude.ai managed agents need a tunnel (v2)</td><td>claude.ai integration is v2 anyway</td></tr>
+<tr><td>Hono over Express</td><td>2&times; faster; smaller bundle</td><td>Less ecosystem familiarity</td><td>One-file middleware chain is small enough to learn</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>http-sse.ts</td><td><span class="pill s-good">implemented (130 LOC)</span></td><td>Bearer middleware applied; Host header guard</td></tr>
+<tr><td>MCP SDK adapter</td><td><span class="pill s-warn">shim</span></td><td>Replace when SDK 1.0 stabilizes; tracked in main.ts comment</td></tr>
+<tr><td>Body limit + timeout</td><td><span class="pill s-warn">not configured</span></td><td>Defaults likely safe in v1; explicit later</td></tr>
+<tr><td>Boot test</td><td><span class="pill s-bad">1/1 FAIL</span></td><td>Fails because JsonlAuditWriter mkdirs <code>/data/audit</code> at boot; test env can&rsquo;t write there. Fix in Wave 5.</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: transport &middot; tier: Edge &middot; updated: 2026-06-09</div>
+</div></body></html>

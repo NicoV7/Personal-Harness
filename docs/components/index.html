@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · Component Docs</title>
+<link rel="stylesheet" href="_assets/style.css">
+</head><body><div class="wrap">
+
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; Components</div>
+<h1>BetterAI Component Docs</h1>
+<p class="lead">Per-component docs for the BetterAI distributed system. Each component has its own Security, Robustness, Tech Debt, Decisions, Tradeoffs, and Current Status tables. Updated per-commit via the harness hook (see <code>scripts/update-component-docs.mjs</code>).</p>
+
+<p class="meta-row">Generated: 2026-06-09 &middot; Phase: 1.0 scaffolded &middot; Hook: see <code>.githooks/pre-commit</code></p>
+
+<h2>System overview</h2>
+<p>BetterAI is a Dockerized rule corpus + MCP retrieval service. Components run in 4 logical tiers:</p>
+
+<table>
+<thead><tr><th>Tier</th><th>Components</th><th>Lives in</th></tr></thead>
+<tbody>
+<tr><td><strong>Edge</strong> (network in)</td><td><a href="transport.html">transport</a> &middot; <a href="auth.html">auth</a></td><td><code>src/server/transport/</code>, <code>src/server/auth/</code></td></tr>
+<tr><td><strong>Tools</strong> (MCP surface)</td><td><a href="mcp-tools.html">mcp-tools</a></td><td><code>src/mcp-tools/</code></td></tr>
+<tr><td><strong>Core</strong> (retrieval engine)</td><td><a href="retrieve.html">retrieve</a> &middot; <a href="cache.html">cache</a> &middot; <a href="scope.html">scope</a> &middot; <a href="audit.html">audit</a></td><td><code>src/server/retrieve/</code>, <code>cache/</code>, <code>scope/</code>, <code>audit/</code></td></tr>
+<tr><td><strong>Storage</strong> (corpus on disk)</td><td><a href="corpus.html">corpus</a></td><td><code>src/server/corpus/</code> + <code>rules/</code> + <code>skills/</code> + <code>memories/</code></td></tr>
+<tr><td><strong>Operator</strong> (human surface)</td><td><a href="cli.html">cli</a> &middot; <a href="install.html">install</a></td><td><code>src/cli/</code>, <code>install.sh</code>, <code>seed-corpus/</code></td></tr>
+</tbody>
+</table>
+
+<h2>Components</h2>
+
+<div class="grid grid-2">
+  <div class="card"><h3><a href="corpus.html">corpus</a></h3><div class="meta">Storage &middot; Zod-validated reader</div>Rules + skills + memories on disk. Dual-scope (global + repo). Id-collision override at load time.</div>
+  <div class="card"><h3><a href="retrieve.html">retrieve</a></h3><div class="meta">Core &middot; merger + grep</div>Domain-router + dual-pass over global+repo + ranking + 12-rule cap.</div>
+  <div class="card"><h3><a href="cache.html">cache</a></h3><div class="meta">Core &middot; LRU + limiter</div>context_hash LRU (256/60s) + 16-in-flight connection limiter + 64 queue.</div>
+  <div class="card"><h3><a href="audit.html">audit</a></h3><div class="meta">Core &middot; JSONL append-only</div>Per-call audit + rotation (100MB / 30d) + missed_retrieval lever-b.</div>
+  <div class="card"><h3><a href="scope.html">scope</a></h3><div class="meta">Core &middot; .git walkup</div>Repo-root detection + 60s mtime-keyed cache + .betterai/ existence check.</div>
+  <div class="card"><h3><a href="transport.html">transport</a></h3><div class="meta">Edge &middot; Hono HTTP/SSE</div>HTTP/SSE on 127.0.0.1:7777. MCP SDK adapter (shim until SDK 1.0 stabilizes).</div>
+  <div class="card"><h3><a href="auth.html">auth</a></h3><div class="meta">Edge &middot; bearer middleware</div>Bearer-token on all /mcp/*; Host header anti-DNS-rebinding; /health allowlist + audit.</div>
+  <div class="card"><h3><a href="mcp-tools.html">mcp-tools</a></h3><div class="meta">Tools &middot; 7 handlers</div>retrieve_context (canonical) + retrieve_rules/skills/memories + record_memory + explain_rule + check_file.</div>
+  <div class="card"><h3><a href="cli.html">cli</a></h3><div class="meta">Operator &middot; 7 verbs</div>init &middot; validate &middot; status &middot; why &middot; replay &middot; gate &middot; new. Read ops work offline.</div>
+  <div class="card"><h3><a href="install.html">install</a></h3><div class="meta">Operator &middot; one-command setup</div>install.sh + Dockerfile + docker-compose + welcome-task. 5-step TTHW target.</div>
+</div>
+
+<h2>Cross-cutting concerns</h2>
+<table>
+<thead><tr><th>Concern</th><th>Touches</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Bearer-token auth on every MCP tool</td><td><a href="auth.html">auth</a>, <a href="mcp-tools.html">mcp-tools</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>parent_agent_session_id on subagent audit events</td><td><a href="audit.html">audit</a>, <a href="mcp-tools.html">mcp-tools</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>scope + repo_root in context_hash</td><td><a href="cache.html">cache</a>, <a href="retrieve.html">retrieve</a>, <a href="scope.html">scope</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>HTTP/SSE only (no stdio)</td><td><a href="transport.html">transport</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>CLI read ops work without container running</td><td><a href="cli.html">cli</a>, <a href="corpus.html">corpus</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Auto-retrieve mechanism (lever a/b/c)</td><td><a href="install.html">install</a>, <a href="audit.html">audit</a>, <a href="mcp-tools.html">mcp-tools</a></td><td><span class="pill s-warn">a+c only</span></td></tr>
+<tr><td>Embeddings (deferred to Phase 1.5)</td><td><a href="retrieve.html">retrieve</a>, <a href="corpus.html">corpus</a></td><td><span class="pill s-info">deferred</span></td></tr>
+<tr><td>ast-grep (deferred to Phase 1.5)</td><td><a href="mcp-tools.html">mcp-tools</a></td><td><span class="pill s-info">deferred</span></td></tr>
+</tbody>
+</table>
+
+<h2>How docs stay current</h2>
+<p>The harness keeps docs in sync via <code>.githooks/pre-commit</code>, which runs <code>scripts/update-component-docs.mjs</code>. The script:</p>
+<ul>
+<li>reads <code>git diff --cached --name-only</code> for staged files</li>
+<li>maps each path to its component (per the mapping in <code>scripts/update-component-docs.mjs</code>)</li>
+<li>updates the &ldquo;Recent changes&rdquo; table at the top of <em>Current Status</em> for each touched component</li>
+<li>re-stages the modified doc files so they ship with the commit</li>
+</ul>
+<p>Install with <code>git config core.hooksPath .githooks</code> after cloning. The CI step <code>npm run docs:check</code> verifies docs/component HTMLs reflect the last commit.</p>
+
+<div class="footer">BetterAI v4.1 &middot; Phase 1.0 scaffolded 2026-06-09 &middot; 10 components &middot; 1 harness hook</div>
+
+</div></body></html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BetterAI · mcp-tools</title><link rel="stylesheet" href="_assets/style.css"></head><body><div class="wrap">
+<div class="crumbs"><a href="../IMPLEMENTATION-ROADMAP.html">Roadmap</a> &middot; <a href="index.html">Components</a> &middot; mcp-tools</div>
+<h1>mcp-tools &mdash; 7 tool handlers</h1>
+<p class="meta-row">Tier: Tools &middot; Files: <code>src/mcp-tools/*.ts</code> &middot; Last commit: f4f8801 (Wave 3)</p>
+
+<p class="lead">7 MCP tool handlers, one file each. <code>retrieve_context</code> is the canonical entry point (description starts with &ldquo;ALWAYS call retrieve_context as your first action&rdquo; per DX-FIX-8). Each handler validates input via Zod, calls the DI <code>ToolContext</code>, emits an audit event, returns shaped output.</p>
+
+<h2>The 7 tools</h2>
+<table><thead><tr><th>Tool</th><th>Purpose</th><th>Description hint</th><th>Audit event_type</th></tr></thead><tbody>
+<tr><td><code>retrieve_context</code></td><td>Canonical aggregator: rules + skills + memories in one call</td><td>&ldquo;ALWAYS call retrieve_context as your first action on any code task.&rdquo;</td><td>retrieve</td></tr>
+<tr><td><code>retrieve_rules</code></td><td>Rules only</td><td>Narrow surface for &ldquo;just give me the constraints&rdquo;</td><td>retrieve</td></tr>
+<tr><td><code>retrieve_skills</code></td><td>Skills only</td><td>How-to procedures for a stated intent</td><td>retrieve</td></tr>
+<tr><td><code>retrieve_memories</code></td><td>Memories only</td><td>Prior episodes; includes &ldquo;Don't relitigate&rdquo; decisions</td><td>retrieve</td></tr>
+<tr><td><code>record_memory</code></td><td>Agent writes a discovery / decision / failure</td><td>Scope defaults to repo if detected, else global</td><td>memory_recorded</td></tr>
+<tr><td><code>explain_rule</code></td><td>Full body of a rule by id</td><td>For when the agent wants more context</td><td>explain</td></tr>
+<tr><td><code>check_file</code></td><td>Run check.kind=regex rules against a file</td><td>v1 = regex only; ast-grep deferred to 1.5</td><td>check</td></tr>
+</tbody></table>
+
+<h2>Security</h2>
+<table><thead><tr><th>Concern</th><th>Threat model</th><th>Mitigation</th><th>Where</th><th>Status</th></tr></thead><tbody>
+<tr><td>Bearer bypass on a tool</td><td>Internal tool that skips middleware</td><td>Middleware applied via <code>app.use("*", ...)</code> upstream of any tool route; tools NEVER add their own auth bypass</td><td><a href="auth.html">auth</a></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>Input not validated</td><td>Untyped input crashes handler / writes bad audit</td><td>Every handler uses Zod schema at boundary; rejection returns 400</td><td><code>mcp-tools/*.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>record_memory writes outside corpus</td><td>Path traversal via <code>id</code> field</td><td>id validated as kebab-case; path constructed server-side from yyyy-mm + id; final path verified under corpus root</td><td><code>record-memory.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+<tr><td>check_file with regex DOS</td><td>Rule&rsquo;s <code>check.pattern</code> is catastrophic-backtrack regex</td><td>Compile once at boot; per-file timeout 100ms; warn on slow regex</td><td><code>check-file.ts</code></td><td><span class="pill s-warn">timeout not yet enforced</span></td></tr>
+<tr><td>explain_rule leaks repo-scoped content to global session</td><td>Agent in repo X asks for rule Y; Y is repo-scoped to repo Z</td><td>explain_rule honors scope param; defaults to caller&rsquo;s detected repo scope</td><td><code>explain-rule.ts</code></td><td><span class="pill s-good">enforced</span></td></tr>
+</tbody></table>
+
+<h2>Robustness</h2>
+<table><thead><tr><th>Failure mode</th><th>Handling</th><th>Test</th><th>Status</th></tr></thead><tbody>
+<tr><td>retrieve_context returns empty (no matches)</td><td>Empty arrays; not an error; audit logs the miss</td><td><code>retrieve-context.test.ts</code></td><td><span class="pill s-bad">FAIL: contract drift (see Tech Debt)</span></td></tr>
+<tr><td>record_memory with malformed frontmatter</td><td>Zod rejects; 400</td><td><code>rule-schema.test.ts</code></td><td><span class="pill s-good">covered</span></td></tr>
+<tr><td>record_memory concurrent same-id</td><td>INSERT IGNORE semantics: return existing id; no overwrite</td><td>&mdash;</td><td><span class="pill s-warn">no test</span></td></tr>
+<tr><td>check_file on huge file (&gt;5&nbsp;MB)</td><td>Read in stream; first 5MB only; warn truncation</td><td>&mdash;</td><td><span class="pill s-warn">not implemented</span></td></tr>
+<tr><td>check_file with kind=shell or ts-module</td><td>Reject with clear error; v1 supports regex only</td><td>&mdash;</td><td><span class="pill s-warn">no test (but error path exists)</span></td></tr>
+</tbody></table>
+
+<h2>Technical debt</h2>
+<table><thead><tr><th>Item</th><th>Why it&rsquo;s debt</th><th>Removal cost</th><th>Priority</th></tr></thead><tbody>
+<tr><td><strong>Cross-team contract drift (CRITICAL)</strong></td><td>All 7 tools reference fictional ToolContext methods: <code>ctx.cache.keyFor()</code>, <code>ctx.corpusReader.fetchRules/Skills/Memories()</code>, <code>ctx.session</code>, <code>ctx.toolCallId</code>, <code>AuditEvent.cache_hit</code>, <code>Rule.score</code>/<code>Rule.reason</code>. None of these exist on the actual Team B contracts. <strong>Blocks every MCP tool from compiling.</strong> 247 typecheck errors largely traceable here.</td><td>M (contract reconciliation: ~1 day &mdash; Team B + Team C sit together; pick one shape; rewrite tool calls)</td><td><span class="pill s-bad">P0 (Wave 5)</span></td></tr>
+<tr><td>Tool descriptions hand-written (not generated from schemas)</td><td>Schema and description can drift</td><td>S (Zod &rarr; description generator)</td><td><span class="pill s-mut">P3</span></td></tr>
+<tr><td>No retry / idempotency on record_memory</td><td>Agent retries can double-write under race</td><td>S (INSERT IGNORE by id; needs unit test)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>retrieve_context emits 1 audit event but counts as multiple kinds queried</td><td>Hard to aggregate &ldquo;kinds_retrieved&rdquo; metric</td><td>XS (already in schema as <code>retrieved_kinds</code>; just wire it)</td><td><span class="pill s-warn">P2</span></td></tr>
+<tr><td>check_file timeout not enforced per regex</td><td>Catastrophic backtrack possible</td><td>S (run regex in worker with timeout)</td><td><span class="pill s-warn">P2</span></td></tr>
+</tbody></table>
+
+<h2>Decisions</h2>
+<table><thead><tr><th>Decision</th><th>Alternatives</th><th>Why chosen</th><th>Source</th></tr></thead><tbody>
+<tr><td>retrieve_context as canonical entry point</td><td>3 granular tools only</td><td>1 call, 1 audit event, consistent context_hash; subagent convenience</td><td>multi-agent eng review &sect;1.4</td></tr>
+<tr><td>Tool description includes &ldquo;ALWAYS call retrieve_context as your first action&rdquo;</td><td>Silent description; rely on system prompt</td><td>Lever-a covers main loop; description-hint catches Workflow subagent whose orchestrator forgot</td><td>DX review DX-FIX-8</td></tr>
+<tr><td>record_memory is the only write tool</td><td>record_rule, record_skill</td><td>Memories are episodic (agent-discoverable); rules+skills are human-curated</td><td>multi-agent eng review &sect;1.2</td></tr>
+<tr><td>One file per tool</td><td>Single barrel; class-based registry</td><td>Easy to add/remove; per-tool tests; isolated audit</td><td>scaffold convention</td></tr>
+<tr><td>v1 check.kind = regex only</td><td>Allow shell + ts-module</td><td>Sandboxing for shell/ts-module is v2 work; security-critical to defer</td><td>v4 design CRIT fix</td></tr>
+<tr><td>Zod at boundary (every tool)</td><td>Manual validation; runtime types only</td><td>Consistent error shape; auto-doc; testable</td><td>scaffold convention</td></tr>
+</tbody></table>
+
+<h2>Tradeoffs</h2>
+<table><thead><tr><th>Choice</th><th>Pro</th><th>Con</th><th>Acceptable because</th></tr></thead><tbody>
+<tr><td>4 retrieve_* tools (1 canonical + 3 granular)</td><td>Flexible; discoverable</td><td>Agents may pick wrong; mild proliferation</td><td>Description hint nudges retrieve_context as default</td></tr>
+<tr><td>Description-as-hint instead of forced first-call</td><td>Doesn&rsquo;t need MCP protocol changes</td><td>Agents can ignore it</td><td>Belt-and-suspenders: lever-a covers most cases</td></tr>
+<tr><td>Reject shell/ts-module loudly</td><td>Clear v1 boundary</td><td>Some power users will be blocked</td><td>Real sandbox is v2; loud is honest</td></tr>
+</tbody></table>
+
+<h2>Current status</h2>
+<table><thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead><tbody>
+<tr><td>7 tool files</td><td><span class="pill s-warn">authored, none compile</span></td><td>All blocked by ToolContext / Cache / Reader contract drift</td></tr>
+<tr><td>retrieve_context test</td><td><span class="pill s-bad">4/4 FAIL</span></td><td><code>TypeError: ctx.cache.keyFor is not a function</code></td></tr>
+<tr><td>record_memory</td><td><span class="pill s-warn">authored, untested</span></td><td>Same blocker</td></tr>
+<tr><td>check_file</td><td><span class="pill s-warn">authored, untested</span></td><td>Plus AuditEvent.cache_hit field doesn&rsquo;t exist in schema</td></tr>
+<tr><td>Next action</td><td colspan="2"><strong>Wave 5: Cross-team contract reconciliation.</strong> Team B + Team C agree on shape, then mass-rewrite of mcp-tools/* to call the real methods.</td></tr>
+<tr><td>Recent changes (auto-stamped)</td><td colspan="2"><em>(populated by <code>.githooks/pre-commit</code>)</em></td></tr>
+</tbody></table>
+
+
+<h2>Recent commits</h2>
+<!-- AUTOSTAMP:RECENT-COMMITS:START -->
+<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>
+<tr><td><code>2026-06-09</code></td><td><code>f4f8801</code></td><td>feat(scaffold): Phase 1.0 TS server + Docker + 7 MCP tools + CLI + tests (Wave 3)</td></tr>
+</tbody></table>
+<!-- AUTOSTAMP:RECENT-COMMITS:END -->
+
+<div class="footer">component: mcp-tools &middot; tier: Tools &middot; updated: 2026-06-09</div>
+</div></body></html>
