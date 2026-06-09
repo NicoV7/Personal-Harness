@@ -137,14 +137,10 @@ function prependRow(html, { sha, date, subject }) {
     ? existing.split(/(?=<tr>)/).map((r) => r.trim()).filter(Boolean)
     : []
 
-  // Dedupe: if the latest existing row has the same SHA, replace instead of prepend.
-  let rows = existingRows
-  if (rows[0] && rows[0].includes(`<code>${safe(sha)}</code>`)) {
-    rows = [newRow, ...rows.slice(1)]
-  } else {
-    rows = [newRow, ...rows]
-  }
-  rows = rows.slice(0, MAX_ROWS)
+  // Dedupe: drop any prior `staging` placeholder rows (left by pre-commit hook
+  // when the SHA wasn't known yet) AND drop any prior row matching this SHA.
+  let rows = existingRows.filter((r) => !r.includes('<code>staging</code>') && !r.includes(`<code>${safe(sha)}</code>`))
+  rows = [newRow, ...rows].slice(0, MAX_ROWS)
 
   const newSection = `\n<table><thead><tr><th>Date</th><th>SHA</th><th>Subject</th></tr></thead><tbody>\n${rows.join('\n')}\n</tbody></table>\n`
   return html.slice(0, startIdx + START.length) + newSection + html.slice(endIdx)
