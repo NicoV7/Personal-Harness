@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>BetterAI v4 — Implementation Roadmap</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-2: #161b22;
+    --bg-3: #1c2128;
+    --fg: #c9d1d9;
+    --fg-2: #8b949e;
+    --fg-3: #6e7681;
+    --accent: #f78166;
+    --accent-2: #58a6ff;
+    --accent-3: #a5d6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --border: #30363d;
+    --code-bg: #0d1117;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.55; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px; }
+  h1, h2, h3, h4 { font-weight: 600; margin-top: 1.6em; margin-bottom: 0.55em; color: #e6edf3; }
+  h1 { font-size: 28px; margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+  h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 17px; color: var(--accent-3); }
+  h4 { font-size: 15px; color: var(--accent-2); }
+  p { margin: 0.6em 0; }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-3); padding: 1px 6px; border-radius: 3px; color: var(--accent-3); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; }
+  pre code { background: transparent; padding: 0; color: var(--fg); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-2); color: var(--fg-2); font-weight: 600; }
+  td code { font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+  .p-p0 { background: rgba(248,81,73,0.15); color: var(--bad); border: 1px solid rgba(248,81,73,0.4); }
+  .p-p1 { background: rgba(210,153,34,0.15); color: var(--warn); border: 1px solid rgba(210,153,34,0.4); }
+  .p-p2 { background: rgba(63,185,80,0.15); color: var(--good); border: 1px solid rgba(63,185,80,0.4); }
+  .p-p3 { background: rgba(139,148,158,0.15); color: var(--fg-2); border: 1px solid rgba(139,148,158,0.4); }
+  .p-info { background: rgba(88,166,255,0.15); color: var(--accent-2); border: 1px solid rgba(88,166,255,0.4); }
+  .lead { font-size: 16px; color: var(--fg-2); border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 18px 0; }
+  .grid { display: grid; gap: 14px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card h3 { margin-top: 0; }
+  .card .meta { color: var(--fg-3); font-size: 12px; font-family: var(--mono); margin: 4px 0 10px; }
+  .phase { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; margin: 14px 0; }
+  .phase header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .phase h3 { margin: 0; }
+  .phase .timing { font-family: var(--mono); font-size: 12px; color: var(--fg-3); }
+  .phase ul { margin: 8px 0 4px; padding-left: 20px; }
+  .phase ul li { margin: 4px 0; }
+  .legend { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--fg-2); margin: 8px 0 20px; }
+  .ascii { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px; line-height: 1.35; color: var(--fg); white-space: pre; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+  .footer { color: var(--fg-3); font-size: 12px; text-align: center; margin: 28px 0 10px; font-family: var(--mono); }
+  .crit { color: var(--bad); font-weight: 600; }
+  .ok { color: var(--good); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .info { color: var(--accent-2); font-weight: 600; }
+  details { background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin: 8px 0; }
+  details summary { cursor: pointer; color: var(--accent-3); font-weight: 600; }
+  details[open] summary { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>BetterAI v4 — Implementation Roadmap</h1>
+<p class="lead">A Dockerized rule corpus + MCP retrieval service that injects relevant code-quality/design/maintainability rules into any AI agent&rsquo;s context <em>before</em> the agent writes or plans code. VSCode is the human surface. Personal toolkit, not a product. The corpus is the moat.</p>
+
+<p>This file consolidates the v4 design (APPROVED) and the three reviews from 2026-06-09 (corpus migration eng review, multi-agent + skills/memories eng review, DX review) into a single implementation map. Source files referenced in §References.</p>
+
+<h2>Phase Map</h2>
+
+<div class="legend">
+  <span class="pill p-p0">P0 (blocking)</span>
+  <span class="pill p-p1">P1 (in-phase)</span>
+  <span class="pill p-p2">P2 (in-phase polish)</span>
+  <span class="pill p-p3">P3 (deferred)</span>
+  <span class="pill p-info">gate</span>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 0 &mdash; Corpus Seed Authoring</h3>
+    <span class="timing">1 day solo &middot; <span class="ok">unblocked, next</span></span>
+  </header>
+  <p>Hand-author the seed corpus: 13 rules + 5 skills + 5 memories per the consolidated review set. All three reviews surfaced the same shape requirement &mdash; <strong>rule + skill + memory are sibling artifact kinds with parallel schemas</strong>. Day-1 falsification gate: can you produce all 23 files in one focused day, AND get retrieval to fire against at least one of them?</p>
+  <ul>
+    <li>13 rules at <code>rules/&lt;CATEGORY&gt;/&lt;domain&gt;/&lt;id&gt;.md</code> per corpus eng review §2.2</li>
+    <li>5 skills at <code>skills/&lt;category&gt;/&lt;id&gt;.md</code> per multi-agent eng review §1.2</li>
+    <li>5 seed memories at <code>memories/&lt;yyyy-mm&gt;/&lt;id&gt;.md</code> per multi-agent eng review §1.3</li>
+    <li><code>_meta/schema.md</code> + <code>_meta/domain-router.yaml</code> + <code>_meta/conflict-resolution.md</code></li>
+  </ul>
+  <p><span class="pill p-info">FALSIFICATION GATE</span> If 23 files don&rsquo;t materialize in a focused day, the corpus has no signal &mdash; STOP before Phase 1.0 and figure out what&rsquo;s wrong with the rule content, not the schema.</p>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 1.0 &mdash; Container + MCP Wedge (macOS-only)</h3>
+    <span class="timing">2&ndash;3 weeks solo</span>
+  </header>
+  <ul>
+    <li>TS scaffold + Dockerfile (single-arch <code>linux/arm64</code> only)</li>
+    <li><code>docker-compose.yml</code> with bearer-token + UID/GID + 5 volume mounts</li>
+    <li>MCP tools (HTTP/SSE transport only &mdash; stdio dropped per multi-agent eng review CRIT-1): <code>retrieve_rules</code>, <code>retrieve_skills</code>, <code>retrieve_memories</code>, <code>retrieve_context</code>, <code>record_memory</code>, <code>explain_rule</code>, <code>check_file</code></li>
+    <li>Grep-only retrieval (no embeddings); regex-only <code>check_file</code> (no ast-grep, no shell, no ts-module)</li>
+    <li>Audit JSONL with extended schema: <code>parent_agent_session_id</code>, <code>subagent_class</code>, <code>retrieved_kinds</code> (multi-agent eng review §1.4)</li>
+    <li><code>context_hash</code> LRU cache (256 entries, 60s TTL) + connection limiter (max 16 in-flight)</li>
+    <li>Auto-retrieve lever (a): install script writes CLAUDE.md preamble OR sets <code>BETTERAI_SYSTEM_PROMPT_PREFIX</code></li>
+    <li><code>betterai-cli</code> v1: <code>init / validate / status / why / replay</code> (DX review DX-FIX-5)</li>
+    <li>Welcome task (DX review DX-FIX-1): <code>~/.betterai/welcome-task/README.md</code> with a deliberately rule-triggering prompt</li>
+    <li>Install script forward from Phase 1.5 (DX review DX-FIX-2): docker-compose + MCP config + bearer token + welcome-task in one command</li>
+  </ul>
+  <p><span class="pill p-info">DOGFOODING GATE (Week 2)</span> 5 consecutive engineering days using Claude Code + BetterAI on real work. &ge;5 rules fire AND &ge;3 visible behavior changes. Else re-author rules &mdash; schema isn&rsquo;t the problem, content is.</p>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 1.5 &mdash; Polish + Cross-Platform</h3>
+    <span class="timing">3&ndash;4 weeks</span>
+  </header>
+  <ul>
+    <li>Embedding index (MiniLM via <code>@xenova/transformers</code>, sqlite-vec); activate when any single domain exceeds 30 rules</li>
+    <li><code>check.kind=ast-grep</code> support</li>
+    <li>Multi-arch image (amd64 + arm64) via buildx + GitHub Actions matrix runners</li>
+    <li>GitHub Releases CI/CD pipeline</li>
+    <li>macOS launchd / Linux systemd user-unit auto-start</li>
+    <li>Auto-retrieve lever (b): server emits <code>missed_retrieval</code> audit events</li>
+    <li>Auto-retrieve lever (c): optional <code>~/.claude/skills/betterai-auto-retrieve/SKILL.md</code></li>
+    <li>Three-tier error taxonomy <code>[BAI-NNN]</code> with Stripe-shaped MCP error responses (DX review DX-FIX-9)</li>
+    <li>Docs: <code>README.md</code> + <code>docs/AUTHORING.md</code> + <code>docs/DEBUGGING.md</code> (DX review DX-FIX-12)</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 2 &mdash; VSCode Extension</h3>
+    <span class="timing">3&ndash;4 weeks</span>
+  </header>
+  <ul>
+    <li>Sidebar Rules Explorer with 3-tab toggle (Rules / Skills / Memories &mdash; per multi-agent eng review §2.1 #11)</li>
+    <li>Status bar + container health monitor</li>
+    <li>Audit log webview with <code>parent_agent_session_id</code> + <code>subagent_class</code> columns</li>
+    <li>Commands (Command Palette): new rule / new skill / new memory scaffolders (DX-FIX-6); check file; reindex</li>
+    <li>Diagnostics provider with inline file contents (avoids virtiofs lag on macOS Docker Desktop)</li>
+    <li>Code actions: &ldquo;Apply fix from rule X&rdquo; via <code>fix_template</code></li>
+    <li>Push-based reindex: extension calls <code>reindex(rule_id)</code> on save</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 3 &mdash; Eval Lift Harness (optional)</h3>
+    <span class="timing">~2 weeks</span>
+  </header>
+  <ul>
+    <li>Port <code>rate_limited_webhook_receiver</code> fixture from techdebt (eval fixtures only &mdash; not a runtime dep)</li>
+    <li>4-axis lift measurement (corpus on vs off), 10-seed sign test per axis</li>
+    <li>Multi-agent eval fixtures from multi-agent eng review §3.2: <code>parallel-bug-hunt</code>, <code>sequential-implementation</code>, <code>record-memory-roundtrip</code>, <code>parallel-fan-out-50</code></li>
+    <li><code>betterai eval --multi-agent</code> CLI surface</li>
+    <li><code>betterai gate --week N</code> auto-checks the dogfooding criteria (DX review DX-FIX-19)</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <header>
+    <h3>Phase 4 (v2) &mdash; Sandboxed Exec + Remote MCP + Self-Learning</h3>
+    <span class="timing">months, speculative</span>
+  </header>
+  <ul>
+    <li>Real sandbox for <code>check.kind=shell</code> and <code>ts-module</code> (gVisor or <code>network_mode: none</code> + read-only rootfs)</li>
+    <li>claude.ai managed agents integration (remote MCP w/ OAuth)</li>
+    <li>Self-learning loop: audit log post-processor extracts memories from agent failures &amp; decisions</li>
+    <li>VSCode Marketplace publish</li>
+    <li>Corpus federation: multiple <code>BETTERAI_CORPUS_ROOT</code> dirs per project</li>
+  </ul>
+</div>
+
+<h2>Architecture (current target after the three reviews)</h2>
+
+<pre class="ascii">      &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; ORCHESTRATOR (main loop) &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+      &#9474;                                                                       &#9474;
+      &#9474;  Claude Code session                                                  &#9474;
+      &#9474;  - System prompt prefix: "Call retrieve_context FIRST"                &#9474;  &#8592; lever (a)
+      &#9474;  - Optional: ~/.claude/skills/betterai-auto-retrieve/SKILL.md         &#9474;  &#8592; lever (c)
+      &#9474;                                                                       &#9474;
+      &#9474;      &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;    &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;    &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;            &#9474;
+      &#9474;      &#9474; subagent A  &#9474;    &#9474; subagent B  &#9474;    &#9474; subagent C  &#9474;            &#9474;
+      &#9474;      &#9474; (Agent tool)&#9474;    &#9474; (workflow   &#9474;    &#9474; (background)&#9474;            &#9474;
+      &#9474;      &#9474;             &#9474;    &#9474;  agent())   &#9474;    &#9474;             &#9474;            &#9474;
+      &#9474;      &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;    &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;    &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;            &#9474;
+      &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9474;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9474;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9474;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                    &#9474;  retrieve_context(ctx)              &#9474;
+                    &#9474;                  &#9474;                  &#9474;
+        &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+        &#9474;   betterai-server (HTTP/SSE on 127.0.0.1:7777)       &#9474;
+        &#9474;   - context_hash cache (256 LRU, 60s TTL)             &#9474;
+        &#9474;   - connection limiter (max 16 in-flight)             &#9474;
+        &#9474;   - bearer-token auth (mandatory)                     &#9474;
+        &#9474;   - audit JSONL (parent_session_id, subagent_class)   &#9474;
+        &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                                   &#9474; reads
+                                   &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+                                   &#9474; ~/.betterai/                &#9474;
+                                   &#9474;   rules/   (13 seed v1)     &#9474;
+                                   &#9474;   skills/  (5 seed v1)      &#9474;
+                                   &#9474;   memories/ (5 seed v1)     &#9474;
+                                   &#9474;   audit/   (JSONL)          &#9474;
+                                   &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+
+<h2>Workforce &mdash; Wave 1 Fleet (Phase 0 Corpus Authoring)</h2>
+
+<p>Hierarchical decomposition: <strong>orchestrator (you)</strong> &rarr; <strong>worker agents (team leads, each in its own git worktree of <code>/Users/nicov/BetterAI</code>)</strong> &rarr; <strong>files written by each team lead</strong>. Worktree isolation means parallel writes cannot conflict; merge happens post-wave by cherry-picking from each worktree branch.</p>
+
+<table>
+<thead>
+<tr><th>Team Lead</th><th>Slice</th><th>Files</th><th>Source material</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>&alpha; STANDARDS / maintainability</strong></td>
+  <td>4 rules</td>
+  <td><code>simplicity-first.md</code>, <code>surgical-changes.md</code>, <code>no-god-files.md</code>, <code>ask-about-non-functionals.md</code></td>
+  <td>RULES.md Rules 3 (twice), 6a, 6c; corpus eng review §2.2</td>
+</tr>
+<tr>
+  <td><strong>&beta; STANDARDS / error-handling</strong></td>
+  <td>4 rules</td>
+  <td><code>no-catch-all-exception-masking.md</code>, <code>no-defensive-optional-chains.md</code>, <code>no-redundant-internal-validation.md</code>, <code>imports-at-top-not-deferred.md</code></td>
+  <td>RULES.md §4.1, §4.2, §4.3, Rule 7.4; corpus eng review §2.2</td>
+</tr>
+<tr>
+  <td><strong>&gamma; PROCESS / methodology</strong></td>
+  <td>4 rules</td>
+  <td><code>search-context-before-substantive.md</code>, <code>checkpoint-context-around-compaction.md</code>, <code>goal-driven-execution.md</code>, <code>think-before-coding.md</code></td>
+  <td>RULES.md Rules 1, 2, 4, 5; corpus eng review §2.2</td>
+</tr>
+<tr>
+  <td><strong>&delta; ARCHITECTURE / layering</strong></td>
+  <td>1 rule</td>
+  <td><code>layered-architecture-default.md</code></td>
+  <td>RULES.md Rule 6b; corpus eng review §2.2</td>
+</tr>
+<tr>
+  <td><strong>&epsilon; SKILLS team</strong></td>
+  <td>5 skills</td>
+  <td><code>add-new-rule.md</code>, <code>deprecate-rule.md</code>, <code>add-mcp-tool.md</code>, <code>write-vitest-fixture.md</code>, <code>run-betterai-eval.md</code></td>
+  <td>Multi-agent eng review §1.2 (skill schema)</td>
+</tr>
+<tr>
+  <td><strong>&zeta; MEMORIES team</strong></td>
+  <td>5 seed memories</td>
+  <td><code>betterai-v3-theia-rejected.md</code>, <code>docker-mcp-stdio-vs-http.md</code>, <code>voluntary-retrieval-is-the-bottleneck.md</code>, <code>three-artifact-kinds-decided.md</code>, <code>auto-retrieve-three-levers.md</code></td>
+  <td>HANDOFF + all 3 reviews; multi-agent eng review §1.3</td>
+</tr>
+<tr>
+  <td><strong>&eta; META team</strong></td>
+  <td>3 docs</td>
+  <td><code>_meta/schema.md</code>, <code>_meta/domain-router.yaml</code>, <code>_meta/conflict-resolution.md</code></td>
+  <td>Corpus eng review §1.2, §1.3; multi-agent eng review §2.1 #12</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Total Wave 1 output:</strong> ~30 files across 7 isolated worktrees, running concurrently (cap is min(16, cores&minus;2) per Workflow). Wall-clock target: &lt;20 min if each team lead averages ~3 min per file.</p>
+
+<h3>Wave structure (proposed)</h3>
+
+<table>
+<thead><tr><th>Wave</th><th>Phase covered</th><th>Team leads</th><th>Output</th><th>Gate</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Phase 0 (corpus seed)</td><td>7</td><td>~30 markdown files (rules + skills + memories + _meta)</td><td>Day-1 falsification: all files schema-valid</td></tr>
+<tr><td>2</td><td>Phase 1.0 scaffold</td><td>4 (server, CLI, install, audit)</td><td>TS scaffold + Dockerfile + docker-compose + bearer-token + CLI verbs</td><td>Container starts; <code>retrieve_context</code> returns &ge;1 rule on seed prompt</td></tr>
+<tr><td>3</td><td>Phase 1.0 eval + dogfood</td><td>2 (welcome-task, dogfooding gate)</td><td>Welcome task + <code>betterai gate</code> harness; 5-day diary template</td><td>Dogfooding gate: 5 days &times; &ge;5 fires &times; &ge;3 behavior changes</td></tr>
+<tr><td>4</td><td>Phase 1.5 polish</td><td>3 (embeddings, ast-grep, multi-arch CI)</td><td>Embedding index + ast-grep checks + buildx pipeline</td><td>Latency p99 &lt; 100ms at 100 rules</td></tr>
+<tr><td>5</td><td>Phase 2 VSCode</td><td>4 (sidebar, status bar, audit webview, diagnostics)</td><td>VSIX artifact</td><td>Diagnostic visible on hand-crafted bad file</td></tr>
+</tbody>
+</table>
+
+<h2>Consolidated TODO Matrix (31 items)</h2>
+
+<details>
+<summary>TD-R series &mdash; Corpus migration (9 items, from corpus eng review)</summary>
+<table>
+<thead><tr><th>#</th><th>Item</th><th>Effort</th><th>Priority</th></tr></thead>
+<tbody>
+<tr><td>TD-R1</td><td>Migrate RULES.md &rarr; 13 rule files per §2.2 inventory</td><td>1 day</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-R2</td><td><code>_meta/validators/rule-schema.test.ts</code> (18 tests)</td><td>4 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-R3</td><td><code>_meta/schema.md</code> human-author doc</td><td>1 hour</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-R4</td><td><code>_meta/domain-router.yaml</code></td><td>1 hour</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-R5</td><td>5 retrieval fixtures <code>retrieval-fixtures/*.json</code></td><td>1 hour</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-R6</td><td><code>_meta/conflict-resolution.md</code></td><td>30 min</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-R7</td><td>Update <code>RULES.md</code> as historical pointer</td><td>5 min</td><td><span class="pill p-p3">P3</span></td></tr>
+<tr><td>TD-R8</td><td>Author additional rules during Phase 1.0 dogfooding</td><td>ongoing</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-R9</td><td>Import techdebt PATTERNS.md/STANDARDS.md (open question)</td><td>M</td><td><span class="pill p-p3">P3</span></td></tr>
+</tbody>
+</table>
+</details>
+
+<details>
+<summary>TD-M series &mdash; Multi-agent + skills/memories (13 items, from multi-agent eng review)</summary>
+<table>
+<thead><tr><th>#</th><th>Item</th><th>Effort</th><th>Priority</th></tr></thead>
+<tbody>
+<tr><td>TD-M1</td><td>Drop stdio transport; HTTP/SSE only</td><td>30 min</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M2</td><td>Add <code>parent_agent_session_id</code>, <code>subagent_class</code>, <code>retrieved_kinds</code> to audit schema</td><td>1 hour</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M3</td><td><code>retrieve_skills</code>, <code>retrieve_memories</code>, <code>retrieve_context</code>, <code>record_memory</code> MCP tools</td><td>2 days</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M4</td><td><code>skills/_meta/schema.md</code> with gstack SKILL.md superset compat</td><td>4 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M5</td><td><code>memories/_meta/schema.md</code> with yyyy-mm sharding</td><td>4 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M6</td><td><code>context_hash</code> LRU cache + connection limiter</td><td>1 day</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M7</td><td>Auto-retrieve lever (a): install script CLAUDE.md preamble</td><td>2 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-M8</td><td>Auto-retrieve lever (b): server <code>missed_retrieval</code> events</td><td>2 days</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-M9</td><td>Auto-retrieve lever (c): <code>betterai-auto-retrieve</code> skill file install</td><td>1 hour</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-M10</td><td>4 multi-agent eval fixtures</td><td>2 days</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-M11</td><td><code>betterai eval --multi-agent</code></td><td>3 days</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-M12</td><td>5 seed skills + 5 seed memories</td><td>1 day</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-M13</td><td>Document conflict-resolution (memory &gt; rule &gt; skill)</td><td>1 hour</td><td><span class="pill p-p2">P2</span></td></tr>
+</tbody>
+</table>
+</details>
+
+<details>
+<summary>TD-D series &mdash; Developer Experience (9 items, from DX review)</summary>
+<table>
+<thead><tr><th>#</th><th>Item</th><th>Effort</th><th>Priority</th></tr></thead>
+<tbody>
+<tr><td>TD-D1</td><td>Welcome task + deliberately rule-triggering prompt</td><td>1 hour</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D2</td><td>Install script forward from Phase 1.5 &rarr; Phase 1.0</td><td>4 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D3</td><td>Auto-retrieve lever (a) inside install.sh</td><td>XS</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D4</td><td><code>betterai-cli</code> v1: 5 verbs with helpful <code>--help</code></td><td>3 days</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D5</td><td><code>betterai new {rule,skill,memory}</code> scaffolder</td><td>1 day</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D6</td><td>Error code taxonomy <code>[BAI-NNN]</code> + Stripe-shape MCP errors</td><td>1 day</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-D7</td><td>3 docs: README + AUTHORING + DEBUGGING</td><td>4 hours</td><td><span class="pill p-p1">P1</span></td></tr>
+<tr><td>TD-D8</td><td><code>_meta/version</code> + <code>betterai upgrade</code></td><td>4 hours</td><td><span class="pill p-p2">P2</span></td></tr>
+<tr><td>TD-D9</td><td><code>betterai gate --week N</code> self-verifying dogfooding</td><td>2 hours</td><td><span class="pill p-p2">P2</span></td></tr>
+</tbody>
+</table>
+</details>
+
+<h2>Falsification Gates (don&rsquo;t skip)</h2>
+<table>
+<thead><tr><th>Gate</th><th>When</th><th>Test</th><th>Action if fails</th></tr></thead>
+<tbody>
+<tr><td>Day 1 corpus signal</td><td>End of Phase 0 day</td><td>23 files materialized, all schema-valid, at least 1 retrieves in a hand-test</td><td>STOP; figure out what&rsquo;s wrong with rule content, not schema</td></tr>
+<tr><td>Phase 1.0 dogfooding</td><td>Week 2 of Phase 1.0</td><td>5 consecutive days &times; &ge;5 rule fires &times; &ge;3 visible behavior changes</td><td>Re-author rules; schema is fine, content is the bottleneck</td></tr>
+<tr><td>TTHW (DX gate)</td><td>Phase 1.0 ship</td><td>Fresh-machine install &rarr; first rule fire &lt; 5 min</td><td>Land DX-FIX-1/2/3 before declaring Phase 1.0 done</td></tr>
+<tr><td>Multi-agent retrieval rate</td><td>Phase 3 eval (optional)</td><td>3/3 subagents call <code>retrieve_context</code> in <code>parallel-bug-hunt</code> fixture</td><td>Strengthen auto-retrieve mechanism; revisit lever weighting</td></tr>
+</tbody>
+</table>
+
+<h2>Open Decisions</h2>
+<table>
+<thead><tr><th>Decision</th><th>Status</th><th>Auto-decide</th></tr></thead>
+<tbody>
+<tr><td>Import techdebt PATTERNS/STANDARDS content?</td><td>open</td><td>Defer until Phase 1.0 dogfooding tells you which rule shapes work</td></tr>
+<tr><td>Embedding model (MiniLM vs OpenAI)?</td><td>open</td><td>MiniLM (free, baked into image)</td></tr>
+<tr><td>Agent-written memories require human approval?</td><td>open</td><td>No for v1; surface pending list for review</td></tr>
+<tr><td>Phase 3 eval timing</td><td>open</td><td>Trigger when you want a hard number; daily-driver gate suffices otherwise</td></tr>
+<tr><td>Welcome task: image or repo?</td><td>open</td><td>Image (matches seed corpus distribution choice)</td></tr>
+</tbody>
+</table>
+
+<h2>References</h2>
+<ul>
+  <li><code>~/.gstack/projects/betterai/nicov-unknown-design-20260609-141323.md</code> &mdash; v4 design (APPROVED)</li>
+  <li><code>~/.gstack/projects/betterai/nicov-unknown-eng-review-rules-corpus-20260609-145545.md</code> &mdash; corpus migration eng review</li>
+  <li><code>~/.gstack/projects/betterai/nicov-unknown-eng-review-multi-agent-evals-20260609-152028.md</code> &mdash; multi-agent + skills/memories eng review</li>
+  <li><code>~/.gstack/projects/betterai/nicov-unknown-devex-review-betterai-20260609-152756.md</code> &mdash; DX review</li>
+  <li><code>~/.gstack/projects/betterai/HANDOFF-20260609-151359.md</code> &mdash; session handoff</li>
+  <li><code>/Users/nicov/BetterAI/RULES.md</code> &mdash; corpus draft (source for Phase 0 migration)</li>
+</ul>
+
+<div class="footer">Generated 2026-06-09 by /plan-devex-review follow-up &middot; HTML synthesis for BetterAI v4 implementation roadmap</div>
+
+</div>
+</body>
+</html>
