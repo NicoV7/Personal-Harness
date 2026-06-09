@@ -12,15 +12,53 @@ Every artifact is a markdown file with YAML frontmatter. The frontmatter is what
 
 ---
 
+## Scope axis
+
+Every artifact lives in exactly one of two corpus *roots*. The schema is identical in both; the only difference is **where the file lives on disk**, which determines who sees it and how overrides work.
+
+### The two roots
+
+- **GLOBAL corpus** — `~/.betterai/{rules,skills,memories,_meta}/` on the host. Inside the MCP server container this mounts at `/data/`. Global artifacts are *your personal moat*: they apply to every project you touch from this machine.
+- **REPO corpus** — `<repo-root>/.betterai/{rules,skills,memories}/` on the host. Inside the container this is reachable at `/projects/<repo-rel>/.betterai/` via the existing `~/projects:/projects:ro` mount (no new mount required). Repo artifacts are *version-controlled with the project*: they ship in the repo, get PR'd like code, and survive team handoffs.
+
+A repo corpus is detected at retrieval time by walking up from `context.file_paths[0]` until a `.git/` directory is found; if that repo root contains a `.betterai/` directory, it's the active repo corpus. The detection is cached for 60s keyed on the mtime of `<repo-root>/.git/HEAD` so branch switches invalidate cleanly.
+
+### Scope is implicit from location — there is no `scope` field
+
+The frontmatter does **not** carry a `scope: global | repo` key. The scope of an artifact is fully determined by which root the file lives in. This keeps the schema identical across the two roots and makes "move a rule from global to repo" a literal `git mv` rather than a frontmatter edit.
+
+### Override semantics (id-collision)
+
+The retrieval pipeline runs the domain-router + grep retrieval against **both** corpora and merges the results. The merge rule is:
+
+- **Distinct ids:** repo and global artifacts with unique ids both appear; ranking (severity × match-strength × recency) orders them. Repo gets no automatic boost.
+- **Id collision:** if the same `id` appears in both corpora, the **repo version replaces the global version** in the response. The global is dropped — the agent never sees it. This is the override pattern: a project re-declares the rule with the same id to say "this constraint is different *here*."
+
+Overrides are recorded in the audit log (`overridden_global_ids: string[]`) so they're visible to future-you without surprise. Every returned item carries a `scope: "global" | "repo"` field so the agent can see which root supplied each artifact.
+
+### When to author repo vs global
+
+- **Global:** "no broad catch blocks", "always pin dependency versions", "never log PII". Beliefs that apply everywhere you write code.
+- **Repo:** "this codebase uses camelCase, not snake_case", "all timestamps in this service are UTC ms since epoch", "auth tokens never log even at debug". Project-specific overrides or additions.
+
+The default for `betterai new rule` is `--scope repo` when CWD is inside a git repo with a `.betterai/` directory (or one can be scaffolded); else `--scope global`.
+
+---
+
 ## Rule schema
 
-**Location:** `rules/<CATEGORY>/<domain>/<id>.md`
+**File location:**
+
+- Global: `~/.betterai/rules/<CATEGORY>/<domain>/<id>.md` (container: `/data/rules/<CATEGORY>/<domain>/<id>.md`)
+- Repo: `<repo-root>/.betterai/rules/<CATEGORY>/<domain>/<id>.md` (container: `/projects/<repo-rel>/.betterai/rules/<CATEGORY>/<domain>/<id>.md`)
+
+Same `<CATEGORY>/<domain>/<id>.md` layout in both roots. The directory shape is identical; scope is the directory you put it under.
 
 ### Frontmatter — required
 
 | key       | type    | notes                                                            |
 |-----------|---------|------------------------------------------------------------------|
-| `id`      | string  | kebab-case, globally unique across the corpus                    |
+| `id`      | string  | kebab-case, globally unique *within a scope* (id-collision across scopes is the override mechanism, not an error) |
 | `title`   | string  | <80 characters, sentence-case, no trailing period                |
 | `category`| enum    | `STANDARDS` \| `PROCESS` \| `PATTERNS` \| `ARCHITECTURE` \| `DOCUMENTATION` |
 | `domain`  | string  | free-form domain tag (e.g. `maintainability`, `error-handling`)  |
@@ -49,6 +87,8 @@ Every artifact is a markdown file with YAML frontmatter. The frontmatter is what
 6. `## Examples` — optional but recommended. One TypeScript code block per example.
 
 ### Worked example — rule
+
+> *Scope: GLOBAL.* This rule applies across every project you work in; it lives in `~/.betterai/rules/STANDARDS/error-handling/no-broad-catch.md`.
 
 ```markdown
 ---
@@ -107,7 +147,10 @@ Fixed: see "What good looks like".
 
 ## Skill schema
 
-**Location:** `skills/<category>/<id>.md`
+**File location:**
+
+- Global: `~/.betterai/skills/<category>/<id>.md` (container: `/data/skills/<category>/<id>.md`)
+- Repo: `<repo-root>/.betterai/skills/<category>/<id>.md` (container: `/projects/<repo-rel>/.betterai/skills/<category>/<id>.md`)
 
 Skills are procedures, not constraints. There is **no** `severity` field on skills.
 
@@ -115,7 +158,7 @@ Skills are procedures, not constraints. There is **no** `severity` field on skil
 
 | key            | type    | notes                                                            |
 |----------------|---------|------------------------------------------------------------------|
-| `id`           | string  | kebab-case, globally unique                                      |
+| `id`           | string  | kebab-case, globally unique *within a scope*                     |
 | `title`        | string  | <80 chars                                                        |
 | `category`     | string  | `corpus-management` \| `mcp-development` \| `testing` \| `release` \| ... (grow as needed) |
 | `when_to_use`  | string  | **REQUIRED** — the trigger description, multi-line OK            |
@@ -142,6 +185,8 @@ Skills are procedures, not constraints. There is **no** `severity` field on skil
 6. `## Related rules`
 
 ### Worked example — skill
+
+> *Scope: GLOBAL.* This skill applies to any corpus you maintain on this machine; it lives in `~/.betterai/skills/corpus-management/add-new-rule.md`.
 
 ```markdown
 ---
@@ -192,15 +237,18 @@ real TypeScript.
 
 ## Memory schema
 
-**Location:** `memories/<yyyy-mm>/<id>.md`
+**File location:**
 
-Memories are episodes — past decisions, failures, discoveries, constraints. They are time-stamped and durability-tagged.
+- Global: `~/.betterai/memories/<yyyy-mm>/<id>.md` (container: `/data/memories/<yyyy-mm>/<id>.md`)
+- Repo: `<repo-root>/.betterai/memories/<yyyy-mm>/<id>.md` (container: `/projects/<repo-rel>/.betterai/memories/<yyyy-mm>/<id>.md`)
+
+Memories are episodes — past decisions, failures, discoveries, constraints. They are time-stamped and durability-tagged. Repo-scoped memories are particularly valuable for "we decided X for *this* service" notes that should travel with the code.
 
 ### Frontmatter — required
 
 | key                 | type     | notes                                                            |
 |---------------------|----------|------------------------------------------------------------------|
-| `id`                | string   | kebab-case, globally unique                                      |
+| `id`                | string   | kebab-case, globally unique *within a scope*                     |
 | `title`             | string   | <80 chars                                                        |
 | `date`              | date     | ISO date when the *episode* happened (not when you wrote it down)|
 | `project`           | string   | `betterai`                                                       |
@@ -225,6 +273,8 @@ Memories are episodes — past decisions, failures, discoveries, constraints. Th
 3. `## Don't relitigate` — explicit assertion that future-agent should not re-open this territory.
 
 ### Worked example — memory
+
+> *Scope: GLOBAL.* This is a corpus-design decision that applies across every project; it lives in `~/.betterai/memories/2026-06/dropped-shell-and-ts-module-checks.md`. A *repo-scoped* memory would look identical but live in `<repo-root>/.betterai/memories/2026-06/...`.
 
 ```markdown
 ---
@@ -261,6 +311,18 @@ addresses the sandboxing model first.
 
 ---
 
+## Authoring a repo-scoped artifact
+
+When you want a rule, skill, or memory to ship with a specific project rather than apply globally, author it under the repo corpus. The workflow:
+
+1. **Confirm or scaffold the repo corpus.** From inside the repo, run `betterai status`. If the output doesn't list a `REPO` line, run `betterai new rule --scope repo` once — it will create `<repo-root>/.betterai/{rules,skills,memories}/` and a one-line `README.md` if missing.
+2. **Pick the right scope.** If the constraint is "we do it differently in *this* codebase" (camelCase vs snake_case, UTC vs local time, this DB vs that DB), it's repo. If it's "I always do it this way everywhere" (no swallowed errors, no PII in logs), it's global.
+3. **Author with the same schema.** Use the exact same frontmatter and body sections as a global artifact. The schema is identical; only the location differs.
+4. **Decide on override vs addition.** To *override* a global rule for this repo, reuse the global rule's `id` — the retrieval layer will drop the global and serve the repo version. To *add* a project-specific rule that doesn't replace anything global, use a fresh, unique `id`.
+5. **Commit it.** Repo-scoped artifacts are version-controlled with the project. `git add .betterai/` and PR them like code. The override behavior is recorded in the audit log (`overridden_global_ids`), so reviewers can see what's being replaced.
+
+---
+
 ## Cross-cutting conventions
 
 - **Examples are TypeScript** unless the rule is explicitly language-agnostic.
@@ -268,3 +330,4 @@ addresses the sandboxing model first.
 - **Don't repeat across artifacts.** If rule A and rule B overlap, pick one as canonical and `related: [other-id]` from the other.
 - **File sizes:** rules 50-150 lines, skills 60-100 lines, memories 30-60 lines. Going much longer is a smell — split.
 - **No placeholders.** Every section earns its keep or is removed.
+- **Id uniqueness is per-scope.** Id collisions across scopes are the override mechanism, not a validation error. `betterai validate` reports cross-scope id collisions as INFO, not ERROR.
