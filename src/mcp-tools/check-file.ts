@@ -28,7 +28,7 @@ import type {
   Rule,
   AuditEvent,
 } from '../server/main.js'
-import { detectRepoRoot } from '../server/scope/detect.js'
+import { CorpusReader } from '../server/corpus/reader.js'
 
 const baseInputSchema = z.object({
   path: z.string().optional(),
@@ -96,22 +96,28 @@ const tool: McpTool<unknown, CheckFileOutput> = {
     }
 
     // Resolve repo root from either explicit context.file_paths or, failing
-    // that, the file path itself (when caller passed `path`).
+    // that, the file path itself (when caller passed `path`). The repo
+    // scope is only reported as queried when <repo-root>/.betterai exists
+    // as a readable directory (mirrors the orchestrator's gating —
+    // scopes_queried never claims a corpus we did not actually read).
     const detectionPaths =
       context?.file_paths ??
       (path ? [path] : inline_path_hint ? [inline_path_hint] : [])
-    const repoRootDetected = detectionPaths.length
-      ? detectRepoRoot(detectionPaths)
-      : null
+    const detection = detectionPaths.length
+      ? ctx.repoRootDetector.detectFromBatch(detectionPaths)
+      : { repo_root: null, has_betterai_dir: false }
+    const repoRootDetected = detection.repo_root
+    const repoCorpusReadable =
+      repoRootDetected !== null && detection.has_betterai_dir
 
     const scopesQueried: Array<'global' | 'repo'> = []
     if (scope === 'global') scopesQueried.push('global')
     else if (scope === 'repo') {
-      if (repoRootDetected) scopesQueried.push('repo')
+      if (repoCorpusReadable) scopesQueried.push('repo')
       else scopesQueried.push('global')
     } else {
       scopesQueried.push('global')
-      if (repoRootDetected) scopesQueried.push('repo')
+      if (repoCorpusReadable) scopesQueried.push('repo')
     }
 
     // Read file contents if `path` was provided. The host→container path
@@ -123,16 +129,28 @@ const tool: McpTool<unknown, CheckFileOutput> = {
         ? inline_contents
         : readFileSync(path!, 'utf8')
 
+    // Construct a per-call CorpusReader scoped to global + the detected
+    // repo corpus (mirrors the orchestrator's reader construction — the
+    // DI singleton reader is global-only and would make repo checks
+    // silently invisible). The reader applies the v4.1 repo-wins
+    // id-collision override at load time and reports the dropped global
+    // ids on the snapshot.
+    const reader = new CorpusReader({
+      globalRoot: ctx.config.BETTERAI_CORPUS_ROOT,
+      repoRoot:
+        scopesQueried.includes('repo') && repoRootDetected
+          ? `${repoRootDetected}/.betterai`
+          : null,
+    })
+    const snapshot = reader.read()
+    const overriddenIds: string[] = snapshot.overridden_global_ids
+
     // Collect every rule that has a `check` block, then filter to the
     // scopes we're querying (the reader returns rules tagged with .scope).
-    const allCheckable: Rule[] = ctx.corpusReader.fetchCheckableRules()
-    const candidateRules = allCheckable.filter((r: Rule) =>
-      scopesQueried.includes(r.scope),
+    const rules = snapshot.rules.filter(
+      (r: Rule) =>
+        r.check?.kind !== undefined && scopesQueried.includes(r.scope),
     )
-
-    // Honor v4.1 override semantics: repo wins on id collision.
-    const overriddenIds: string[] = []
-    const rules = mergeWithOverride(candidateRules, overriddenIds)
 
     const violations: Violation[] = []
     const skipped: Array<{ rule_id: string; reason: string }> = []
@@ -238,25 +256,4 @@ class ValidationError extends Error {
     super(message)
     this.name = 'ValidationError'
   }
-}
-
-function mergeWithOverride(
-  items: Rule[],
-  overriddenIds: string[],
-): Rule[] {
-  const byId = new Map<string, Rule>()
-  for (const item of items) {
-    const existing = byId.get(item.id)
-    if (!existing) {
-      byId.set(item.id, item)
-      continue
-    }
-    if (existing.scope === 'global' && item.scope === 'repo') {
-      overriddenIds.push(existing.id)
-      byId.set(item.id, item)
-    } else if (existing.scope === 'repo' && item.scope === 'global') {
-      overriddenIds.push(item.id)
-    }
-  }
-  return Array.from(byId.values())
 }

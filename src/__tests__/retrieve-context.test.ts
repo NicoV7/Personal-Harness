@@ -1,102 +1,48 @@
-// Integration test for retrieve_context against an in-memory rules dir.
+// Integration test for the retrieve_context MCP tool against REAL tmpdir
+// corpora, driven through a REAL RetrievalOrchestrator (no mocked reader,
+// no mocked cache — the same wiring src/server/main.ts builds).
 //
 // Contract per docs/design/v4.1-scoping-extension.md §3 (merge + id-collision
-// override) and the SHARED MCP TOOL CONTRACT in this slice. The mcp-tools
-// handler is owned by Team C; it accepts a `ctx` containing
-//   { auditLog, repoRootDetector, corpusReader, cache }
-// and returns { rules, skills, memories, overridden_global_ids }.
+// override) plus the G5-M1 structured no-match shape
+// (src/contracts/retrieval.ts RetrieveMatchInfo).
 //
-// The test:
-//   1. Lays out a tmpdir corpus with a global rule and a repo rule sharing
-//      an id (the override case).
-//   2. Lays out a global rule with a unique id (the additive-union case).
-//   3. Calls the retrieve_context handler directly with both scopes.
-//   4. Asserts the override drops the global, and the additive id is present.
-//
-// If Team C's handler isn't compiled at merge time, the test falls back to a
-// minimal in-test verification against the corpus directly so the corpus
-// shape is still asserted.
+// REGRESSION (live-verification bug, 2026-06-10): the tool used to hand-roll
+// retrieval against the DI singleton CorpusReader, which main.ts constructs
+// with ONLY globalRoot — so repo-scope artifacts could NEVER be returned
+// while the output still reported scopes_queried: ["global","repo"]. The
+// tool now delegates to ctx.orchestrator, which builds a per-call reader
+// with the correct repoRoot and gates scopes_queried on the repo corpus
+// actually being readable (has_betterai_dir). The tests below pin:
+//   - a repo-only rule IS returned when <repo>/.betterai exists
+//   - scopes_queried includes "repo" ONLY when the repo corpus is readable
+//   - exactly ONE audit event per call (the orchestrator's, never a second)
+//   - cache_hit: true on repeat, identical payload
+//   - the G5-M1 no-match shape
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-interface RetrievedItem {
-  id: string;
-  kind: "rule" | "skill" | "memory";
-  scope: "global" | "repo";
-  domain?: string;
-  score?: number;
-}
+import retrieveContext from "../mcp-tools/retrieve-context.js";
+import type { ToolContext, ToolCallMeta } from "../server/main.js";
+import { RetrievalOrchestrator } from "../server/retrieve/index.js";
+import { DomainRouter } from "../server/retrieve/router.js";
+import { ContextCache } from "../server/cache/context-hash.js";
+import { RepoDetector } from "../server/scope/repo-detector.js";
+import type { AuditEvent } from "../server/audit/jsonl.js";
 
-interface RetrieveContextOutput {
-  rules: RetrievedItem[];
-  skills: RetrievedItem[];
-  memories: RetrievedItem[];
+// Loose view of the tool's output union so tests don't fight TS narrowing.
+interface RetrieveContextOut {
+  rules: Array<{ id: string; scope: "global" | "repo"; severity: string }>;
+  skills: Array<{ id: string; scope: "global" | "repo" }>;
+  memories: Array<{ id: string; scope: "global" | "repo" }>;
   overridden_global_ids: string[];
-  scopes_queried?: ("global" | "repo")[];
-  // G5-M1 structured no-match discriminant (src/contracts/retrieval.ts)
+  scopes_queried: Array<"global" | "repo">;
+  repo_root_detected: string | null;
   match?: "matched" | "none";
   reason?: "no_match";
   query_echo?: { intent: string; file_paths: string[]; symbols: string[] };
-}
-
-// Test ctx interface aligned with the reconciled Wave 5 ToolContext API:
-// - cache: keyFor + envelope-shaped get/set (CachedRetrieval<T>)
-// - corpusReader: fetchRules / fetchSkills / fetchMemories view methods
-interface FakeMeta {
-  agent_session_id: string;
-  parent_agent_session_id: string | null;
-  subagent_class: "main" | "subagent";
-  tool_call_id: string;
-}
-
-let retrieveContext: {
-  handler: (
-    input: { context: { file_paths: string[]; intent: string; symbols?: string[]; recent_diff?: string }; top_k_per_kind?: number; scope?: "merged" | "global" | "repo" },
-    ctx: {
-      auditLog: (e: unknown) => void;
-      repoRootDetector: (paths: string[]) => string | null;
-      corpusReader: {
-        fetchRules: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; domain: string; scope: "global" | "repo" }[];
-        fetchSkills: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; scope: "global" | "repo" }[];
-        fetchMemories: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; scope: "global" | "repo" }[];
-      };
-      cache: {
-        keyFor: (input: unknown) => string;
-        get: <T>(k: string) => { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number } | undefined;
-        set: <T>(k: string, v: { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number }) => void;
-      };
-    },
-    meta: FakeMeta,
-  ) => Promise<RetrieveContextOutput>;
-};
-try {
-  retrieveContext = (await import("../mcp-tools/retrieve-context.js")).default;
-} catch {
-  // Fallback minimal handler that exercises the merge/override semantics
-  // using the corpus on disk directly. Lets the test assert the contract
-  // even when Team C's module isn't compiled at merge time.
-  retrieveContext = {
-    handler: async (input, ctx) => {
-      const repoRoot = ctx.repoRootDetector(input.context.file_paths);
-      const global = ctx.corpusReader.readGlobalRules();
-      const repo = repoRoot ? ctx.corpusReader.readRepoRules(repoRoot) : [];
-      const repoIds = new Set(repo.map(r => r.id));
-      const overridden = global.filter(g => repoIds.has(g.id)).map(g => g.id);
-      const mergedGlobal = global.filter(g => !repoIds.has(g.id));
-      return {
-        rules: [
-          ...mergedGlobal.map(r => ({ ...r, kind: "rule" as const, score: 0.5 })),
-          ...repo.map(r => ({ ...r, kind: "rule" as const, score: 0.5 })),
-        ],
-        skills: [],
-        memories: [],
-        overridden_global_ids: overridden,
-      };
-    },
-  };
 }
 
 const RULE_TEMPLATE = (id: string, severity: string) => `---
@@ -106,6 +52,9 @@ category: STANDARDS
 domain: naming
 severity: ${severity}
 created: 2026-06-09
+applies_when:
+  paths: ["**/*.ts"]
+  intents: ["rename"]
 ---
 
 ## What this rule says
@@ -126,153 +75,207 @@ const x = 1;
 Wrong.
 `;
 
-describe("retrieve_context against an in-memory rules dir", () => {
+function writeRule(corpusRoot: string, id: string, severity: string): void {
+  const dir = join(corpusRoot, "rules/STANDARDS/naming");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.md`), RULE_TEMPLATE(id, severity));
+}
+
+describe("retrieve_context through a real RetrievalOrchestrator", () => {
   let globalRoot: string;
-  let repoRoot: string;
+  let emptyGlobalRoot: string;
+  let repoRoot: string; // git repo WITH a .betterai corpus
+  let bareRepoRoot: string; // git repo WITHOUT a .betterai corpus
+  let looseDir: string; // not a git repo at all
 
   beforeAll(() => {
     globalRoot = mkdtempSync(join(tmpdir(), "betterai-global-"));
+    emptyGlobalRoot = mkdtempSync(join(tmpdir(), "betterai-empty-global-"));
     repoRoot = mkdtempSync(join(tmpdir(), "betterai-repo-"));
-    mkdirSync(join(globalRoot, "rules/STANDARDS/naming"), { recursive: true });
+    bareRepoRoot = mkdtempSync(join(tmpdir(), "betterai-bare-repo-"));
+    looseDir = mkdtempSync(join(tmpdir(), "betterai-loose-"));
+
+    // Global corpus: the colliding id + an additive-only id.
+    writeRule(globalRoot, "use-snake-case", "medium");
+    writeRule(globalRoot, "avoid-i-prefix", "low");
+
+    // Repo WITH .betterai: overrides use-snake-case, adds a repo-only rule.
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     writeFileSync(join(repoRoot, ".git/HEAD"), "ref: refs/heads/main\n");
-    mkdirSync(join(repoRoot, ".betterai/rules/STANDARDS/naming"), { recursive: true });
     mkdirSync(join(repoRoot, "src"), { recursive: true });
     writeFileSync(join(repoRoot, "src/x.ts"), "// x\n");
+    writeRule(join(repoRoot, ".betterai"), "use-snake-case", "high");
+    writeRule(join(repoRoot, ".betterai"), "repo-naming-prefix", "high");
 
-    // The shared id used for the override case.
-    writeFileSync(
-      join(globalRoot, "rules/STANDARDS/naming/use-snake-case.md"),
-      RULE_TEMPLATE("use-snake-case", "medium"),
-    );
-    writeFileSync(
-      join(repoRoot, ".betterai/rules/STANDARDS/naming/use-snake-case.md"),
-      RULE_TEMPLATE("use-snake-case", "high"),
-    );
-    // An additive-only global rule with a distinct id.
-    writeFileSync(
-      join(globalRoot, "rules/STANDARDS/naming/avoid-i-prefix.md"),
-      RULE_TEMPLATE("avoid-i-prefix", "low"),
-    );
+    // Repo WITHOUT .betterai: a git root but no readable repo corpus.
+    mkdirSync(join(bareRepoRoot, ".git"), { recursive: true });
+    writeFileSync(join(bareRepoRoot, ".git/HEAD"), "ref: refs/heads/main\n");
+    mkdirSync(join(bareRepoRoot, "src"), { recursive: true });
+    writeFileSync(join(bareRepoRoot, "src/y.ts"), "// y\n");
+
+    // Loose files: one matching the rule glob, one matching nothing.
+    writeFileSync(join(looseDir, "file.ts"), "// loose\n");
+    writeFileSync(join(looseDir, "notes.txt"), "loose notes\n");
   });
 
   afterAll(() => {
-    rmSync(globalRoot, { recursive: true, force: true });
-    rmSync(repoRoot, { recursive: true, force: true });
+    for (const dir of [globalRoot, emptyGlobalRoot, repoRoot, bareRepoRoot, looseDir]) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  function readMarkdownIds(dir: string): { id: string; domain: string }[] {
-    function walk(d: string): string[] {
-      const out: string[] = [];
-      for (const name of readdirSync(d)) {
-        if (name.startsWith("_")) continue;
-        const full = join(d, name);
-        try {
-          const st = readdirSync(full);
-          out.push(...walk(full));
-          void st;
-        } catch {
-          if (name.endsWith(".md")) out.push(full);
-        }
-      }
-      return out;
-    }
-    return walk(dir).map(f => {
-      const text = readFileSync(f, "utf8");
-      const idMatch = /^id:\s*(.+)$/m.exec(text);
-      return { id: idMatch ? idMatch[1].trim() : "", domain: "naming" };
-    });
-  }
-
-  const fakeAudit = () => {};
-  const fakeMeta: FakeMeta = {
-    agent_session_id: "test-session-1",
-    parent_agent_session_id: null,
-    subagent_class: "main",
-    tool_call_id: "test-call-1",
-  };
-  function makeCtx() {
-    const cache = new Map<string, unknown>();
-    const allGlobalRules = () =>
-      readMarkdownIds(join(globalRoot, "rules")).map(r => ({ ...r, scope: "global" as const }));
-    const allRepoRules = () =>
-      readMarkdownIds(join(repoRoot, ".betterai/rules")).map(r => ({ ...r, scope: "repo" as const }));
+  let callSeq = 0;
+  function meta(): ToolCallMeta {
+    callSeq += 1;
     return {
-      auditLog: fakeAudit,
-      repoRootDetector: (paths: string[]) => (paths[0]?.startsWith(repoRoot) ? repoRoot : null),
-      corpusReader: {
-        fetchRules: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => {
-          const pool = input.scope === "repo" ? allRepoRules() : allGlobalRules();
-          return input.top_k !== undefined ? pool.slice(0, input.top_k) : pool;
-        },
-        fetchSkills: (_input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => [],
-        fetchMemories: (_input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => [],
-      },
-      cache: {
-        keyFor: (input: unknown) => JSON.stringify(input),
-        get: <T>(k: string) => cache.get(k) as { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number } | undefined,
-        set: <T>(k: string, v: { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number }) => {
-          cache.set(k, v);
-        },
-      },
+      agent_session_id: "test-session-1",
+      parent_agent_session_id: null,
+      subagent_class: "main",
+      tool_call_id: `test-call-${callSeq}`,
     };
   }
 
+  /**
+   * Build a fake ToolContext around a REAL orchestrator over the fixture
+   * corpora — the same construction pattern as src/server/main.ts
+   * (DomainRouter, ContextCache, RepoDetector, fake audit writer). The
+   * tool only touches ctx.orchestrator, so the remaining ToolContext
+   * surface is intentionally absent.
+   */
+  function makeCtx(corpusRoot: string = globalRoot): {
+    ctx: ToolContext;
+    events: AuditEvent[];
+  } {
+    const events: AuditEvent[] = [];
+    const orchestrator = new RetrievalOrchestrator({
+      globalCorpusRoot: corpusRoot,
+      router: new DomainRouter({
+        routers: [],
+        defaults: {
+          domains: ["naming"],
+          max_rules_per_domain: 4,
+          max_total_rules: 12,
+        },
+      }),
+      cache: new ContextCache(),
+      repoDetector: new RepoDetector({ stopAt: ["/", tmpdir()] }),
+      auditLog: (e: AuditEvent) => events.push(e),
+    });
+    return { ctx: { orchestrator } as unknown as ToolContext, events };
+  }
+
+  async function call(
+    ctx: ToolContext,
+    input: Record<string, unknown>,
+  ): Promise<RetrieveContextOut> {
+    return (await retrieveContext.handler(
+      input,
+      ctx,
+      meta(),
+    )) as unknown as RetrieveContextOut;
+  }
+
+  const repoInput = () => ({
+    context: {
+      file_paths: [join(repoRoot, "src/x.ts")],
+      intent: "rename a variable",
+    },
+    scope: "merged",
+    top_k_per_kind: 8,
+  });
+
   test("merges global and repo rules into a single response shape", async () => {
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
-        scope: "merged",
-        top_k_per_kind: 8,
-      },
-      makeCtx(),
-      fakeMeta,
-    );
+    const { ctx } = makeCtx();
+    const out = await call(ctx, repoInput());
     expect(Array.isArray(out.rules)).toBe(true);
     expect(Array.isArray(out.overridden_global_ids)).toBe(true);
+    expect(out.repo_root_detected).toBe(repoRoot);
+  });
+
+  test("REGRESSION: a repo-only rule IS returned when the repo corpus exists", async () => {
+    // The pre-fix tool could never return this rule: the singleton reader
+    // had no repoRoot, so repo artifacts were silently invisible.
+    const { ctx } = makeCtx();
+    const out = await call(ctx, repoInput());
+
+    const repoOnly = out.rules.find((r) => r.id === "repo-naming-prefix");
+    expect(repoOnly).toBeDefined();
+    expect(repoOnly?.scope).toBe("repo");
+    expect(out.scopes_queried).toEqual(["global", "repo"]);
   });
 
   test("drops the global version of a rule when the repo declares the same id", async () => {
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
-        scope: "merged",
-      },
-      makeCtx(),
-      fakeMeta,
-    );
-    const colliding = out.rules.filter(r => r.id === "use-snake-case");
+    const { ctx } = makeCtx();
+    const out = await call(ctx, repoInput());
+
+    const colliding = out.rules.filter((r) => r.id === "use-snake-case");
     expect(colliding.length).toBe(1);
     expect(colliding[0].scope).toBe("repo");
+    expect(colliding[0].severity).toBe("high"); // the repo version survived
     expect(out.overridden_global_ids).toContain("use-snake-case");
   });
 
   test("includes the global-only rule when the repo does not declare its id", async () => {
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
-        scope: "merged",
-      },
-      makeCtx(),
-      fakeMeta,
-    );
-    const additive = out.rules.find(r => r.id === "avoid-i-prefix");
+    const { ctx } = makeCtx();
+    const out = await call(ctx, repoInput());
+
+    const additive = out.rules.find((r) => r.id === "avoid-i-prefix");
     expect(additive).toBeDefined();
     expect(additive?.scope).toBe("global");
   });
 
   test("returns only global rules when the context has no detectable repo root", async () => {
-    const ctx = makeCtx();
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: ["/tmp/loose/file.ts"], intent: "rename a variable" },
-        scope: "merged",
+    const { ctx } = makeCtx();
+    const out = await call(ctx, {
+      context: {
+        file_paths: [join(looseDir, "file.ts")],
+        intent: "rename a variable",
       },
-      ctx,
-      fakeMeta,
-    );
-    expect(out.rules.every(r => r.scope === "global")).toBe(true);
+      scope: "merged",
+    });
+
+    expect(out.rules.length).toBeGreaterThan(0);
+    expect(out.rules.every((r) => r.scope === "global")).toBe(true);
     expect(out.overridden_global_ids).toEqual([]);
+    expect(out.scopes_queried).toEqual(["global"]);
+    expect(out.repo_root_detected).toBeNull();
+  });
+
+  test("scopes_queried includes 'repo' ONLY when the repo corpus is actually readable", async () => {
+    // A git repo WITHOUT .betterai/: the repo root is detected, but the
+    // repo corpus is not readable — reporting "repo" here would be the
+    // exact observability lie this delegation fixes.
+    const { ctx, events } = makeCtx();
+    const out = await call(ctx, {
+      context: {
+        file_paths: [join(bareRepoRoot, "src/y.ts")],
+        intent: "rename a variable",
+      },
+      scope: "merged",
+    });
+
+    expect(out.repo_root_detected).toBe(bareRepoRoot);
+    expect(out.scopes_queried).toEqual(["global"]);
+    expect(out.rules.length).toBeGreaterThan(0);
+    expect(out.rules.every((r) => r.scope === "global")).toBe(true);
+    // The audit event reports the same reality.
+    expect(events).toHaveLength(1);
+    expect(events[0].scopes_queried).toEqual(["global"]);
+  });
+
+  test("exactly one audit event per call; cache_hit true on repeat with identical payload", async () => {
+    const { ctx, events } = makeCtx();
+
+    const first = await call(ctx, repoInput());
+    expect(events).toHaveLength(1);
+    expect(events[0].event_type).toBe("retrieve");
+    expect(events[0].cache_hit).toBe(false);
+
+    const second = await call(ctx, repoInput());
+    expect(events).toHaveLength(2);
+    expect(events[1].event_type).toBe("retrieve");
+    expect(events[1].cache_hit).toBe(true);
+    expect(second).toEqual(first);
   });
 
   // ---- G5-M1: structured no-match (docs/RELIABILITY-TEST-GAPS.md) ----------
@@ -282,40 +285,25 @@ describe("retrieve_context against an in-memory rules dir", () => {
   // returns { match: "none", reason: "no_match", query_echo, ... } —
   // a first-class shape agents can branch on — never bare empty arrays.
 
-  function makeEmptyCorpusCtx() {
-    // A corpus with nothing in it, regardless of scope or intent.
-    const ctx = makeCtx();
-    ctx.corpusReader = {
-      fetchRules: () => [],
-      fetchSkills: () => [],
-      fetchMemories: () => [],
-    };
-    return ctx;
-  }
-
   test("empty corpus returns the structured no-match shape, not bare empty arrays", async () => {
-    // Arrange
-    const ctx = makeEmptyCorpusCtx();
+    const { ctx } = makeCtx(emptyGlobalRoot);
 
-    // Act
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
-        scope: "merged",
+    const out = await call(ctx, {
+      context: {
+        file_paths: [join(looseDir, "file.ts")],
+        intent: "rename a variable",
       },
-      ctx,
-      fakeMeta,
-    );
+      scope: "merged",
+    });
 
-    // Assert: explicit discriminant + echo of the evaluated query.
     expect(out.match).toBe("none");
     expect(out.reason).toBe("no_match");
     expect(out.query_echo).toEqual({
       intent: "rename a variable",
-      file_paths: [join(repoRoot, "src/x.ts")],
+      file_paths: [join(looseDir, "file.ts")],
       symbols: [],
     });
-    expect(out.scopes_queried).toEqual(["global", "repo"]);
+    expect(out.scopes_queried).toEqual(["global"]);
     // The v1.0 arrays are still present (additive extension), just empty.
     expect(out.rules).toEqual([]);
     expect(out.skills).toEqual([]);
@@ -323,26 +311,18 @@ describe("retrieve_context against an in-memory rules dir", () => {
   });
 
   test("non-empty corpus with a non-matching query also returns the no-match shape", async () => {
-    // Arrange: reader has rules, but none match this intent.
-    const ctx = makeCtx();
-    const realFetchRules = ctx.corpusReader.fetchRules;
-    ctx.corpusReader.fetchRules = (input) =>
-      input.intent?.includes("rename") ? realFetchRules(input) : [];
+    // The corpus has rules, but neither the path glob (**/*.ts) nor the
+    // intent keyword ("rename") matches this query.
+    const { ctx } = makeCtx();
 
-    // Act
-    const out = await retrieveContext.handler(
-      {
-        context: {
-          file_paths: [join(repoRoot, "src/x.ts")],
-          intent: "deploy a kubernetes operator",
-        },
-        scope: "merged",
+    const out = await call(ctx, {
+      context: {
+        file_paths: [join(looseDir, "notes.txt")],
+        intent: "deploy a kubernetes operator",
       },
-      ctx,
-      fakeMeta,
-    );
+      scope: "merged",
+    });
 
-    // Assert
     expect(out.match).toBe("none");
     expect(out.reason).toBe("no_match");
     expect(out.query_echo?.intent).toBe("deploy a kubernetes operator");
@@ -350,44 +330,27 @@ describe("retrieve_context against an in-memory rules dir", () => {
   });
 
   test("no-match retrieval still emits exactly one audit event with rules_returned: []", async () => {
-    // Arrange
-    const events: { event_type: string; rules_returned: unknown[]; cache_hit?: boolean }[] = [];
-    const ctx = makeEmptyCorpusCtx();
-    ctx.auditLog = (e: unknown) =>
-      events.push(e as { event_type: string; rules_returned: unknown[] });
+    const { ctx, events } = makeCtx(emptyGlobalRoot);
 
-    // Act
-    await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "anything at all" },
-        scope: "merged",
+    await call(ctx, {
+      context: {
+        file_paths: [join(looseDir, "notes.txt")],
+        intent: "anything at all",
       },
-      ctx,
-      fakeMeta,
-    );
+      scope: "merged",
+    });
 
-    // Assert: the no-match path stays observable in the audit trail.
-    expect(events.length).toBe(1);
+    // The no-match path stays observable in the audit trail.
+    expect(events).toHaveLength(1);
     expect(events[0].event_type).toBe("retrieve");
     expect(events[0].rules_returned).toEqual([]);
   });
 
   test("matching query is unchanged except for the additive match: 'matched' discriminant", async () => {
-    // Arrange
-    const ctx = makeCtx();
+    const { ctx } = makeCtx();
 
-    // Act
-    const out = await retrieveContext.handler(
-      {
-        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
-        scope: "merged",
-      },
-      ctx,
-      fakeMeta,
-    );
+    const out = await call(ctx, repoInput());
 
-    // Assert: matched outcome — discriminant present, no no-match fields,
-    // and the v1.0 merge/override behavior intact.
     expect(out.match).toBe("matched");
     expect(out.reason).toBeUndefined();
     expect(out.query_echo).toBeUndefined();

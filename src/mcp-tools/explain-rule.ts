@@ -18,7 +18,6 @@ import type {
   Rule,
   AuditEvent,
 } from '../server/main.js'
-import { detectRepoRoot } from '../server/scope/detect.js'
 
 const inputSchema = z.object({
   rule_id: z
@@ -56,39 +55,62 @@ const tool: McpTool<unknown, Rule> = {
     const input: Input = inputSchema.parse(rawInput)
     const { rule_id, context, scope } = input
 
-    const repoRootDetected = context?.file_paths?.length
-      ? detectRepoRoot(context.file_paths)
-      : null
+    // Repo detection via the DI detector — `scopes_queried` must report
+    // only corpora we can actually read, so the repo scope is gated on
+    // <repo-root>/.betterai existing as a directory (mirrors the
+    // orchestrator's gating).
+    const detection = context?.file_paths?.length
+      ? ctx.repoRootDetector.detectFromBatch(context.file_paths)
+      : { repo_root: null, has_betterai_dir: false }
+    const repoRootDetected = detection.repo_root
+    const repoCorpusReadable =
+      repoRootDetected !== null && detection.has_betterai_dir
 
     const scopesQueried: Array<'global' | 'repo'> = []
     if (scope === 'global') scopesQueried.push('global')
     else if (scope === 'repo') {
-      if (repoRootDetected) scopesQueried.push('repo')
+      if (repoCorpusReadable) scopesQueried.push('repo')
       else scopesQueried.push('global')
     } else {
       scopesQueried.push('global')
-      if (repoRootDetected) scopesQueried.push('repo')
+      if (repoCorpusReadable) scopesQueried.push('repo')
     }
 
-    // Ask the corpus reader for the rule body. The reader returns the
-    // repo version preferentially when both scopes are loaded.
-    const rule = ctx.corpusReader.fetchRuleById(rule_id)
+    // Delegate the lookup to the orchestrator: it constructs a per-call
+    // CorpusReader scoped to global + the detected repo corpus and the
+    // merged snapshot returns the repo version preferentially (v4.1
+    // id-collision override). For scope: 'global' we pass no repo hint
+    // so the lookup stays global-only.
+    const rule = ctx.orchestrator.explainRule(
+      rule_id,
+      scope !== 'global' && scopesQueried.includes('repo')
+        ? context?.file_paths?.[0]
+        : undefined,
+    )
 
-    if (!rule) {
+    // When the caller asked for repo scope ONLY, a global-scoped survivor
+    // must not be returned (and must not appear in the audit as if the
+    // repo corpus produced it).
+    const resolved =
+      scope === 'repo' && scopesQueried.includes('repo') && rule?.scope !== 'repo'
+        ? undefined
+        : rule
+
+    if (!resolved) {
       throw new RuleNotFoundError(
         `rule "${rule_id}" not found in scopes [${scopesQueried.join(', ')}]`,
       )
     }
 
     // We can't cheaply check whether a global version was overridden without
-    // a second lookup; fetchRuleById's contract already collapses the
-    // override and returns the surviving rule. If the surviving rule is
+    // a second lookup; the merged snapshot already collapses the override
+    // and returns the surviving rule. If the surviving rule is
     // repo-scoped and we queried global too, record the override.
     const overriddenIds: string[] =
       scopesQueried.includes('global') &&
       scopesQueried.includes('repo') &&
-      rule.scope === 'repo'
-        ? [rule.id]
+      resolved.scope === 'repo'
+        ? [resolved.id]
         : []
 
     const cacheKey = ctx.cache.keyFor({
@@ -112,10 +134,10 @@ const tool: McpTool<unknown, Rule> = {
       scopes_queried: scopesQueried,
       rules_returned: [
         {
-          id: rule.id,
+          id: resolved.id,
           kind: 'rule',
-          scope: rule.scope,
-          domain: rule.domain,
+          scope: resolved.scope,
+          domain: resolved.domain,
           score: 1,
           reason: 'explain',
         },
@@ -129,7 +151,7 @@ const tool: McpTool<unknown, Rule> = {
     }
     ctx.auditLog(event)
 
-    return rule
+    return resolved
   },
 }
 

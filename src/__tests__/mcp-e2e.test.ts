@@ -56,13 +56,21 @@ const ALL_TOOLS = [
 
 const TOKEN = "e2e-test-token-1234567890";
 
+// applies_when present so the orchestrator's GrepScorer (which drops
+// zero-score artifacts) matches the test call's intent below. The domain
+// is "maintainability" because the fixture corpus ships no parseable
+// domain-router.yaml, and the DomainRouter's built-in defaults route
+// ["maintainability", "methodology"] — capByDomain drops other domains.
 const RULE_FIXTURE = `---
 id: use-snake-case
 title: Use snake_case for identifiers
 category: STANDARDS
-domain: naming
+domain: maintainability
 severity: medium
 created: 2026-06-09
+applies_when:
+  paths: ["**/*.ts"]
+  intents: ["rename"]
 ---
 
 ## What this rule says
@@ -186,7 +194,7 @@ describe("MCP streamable HTTP transport end-to-end", () => {
   test("(c) tools/call retrieve_context returns rules and the audit event carries the session id", async () => {
     const result = await client.callTool({
       name: "retrieve_context",
-      arguments: { context: {} },
+      arguments: { context: { intent: "rename a variable" } },
     });
     expect(result.isError).toBeFalsy();
 
