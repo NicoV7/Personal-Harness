@@ -72,7 +72,7 @@ Same as prior handoff for the rule frontmatter, PLUS:
 | **Phase 0** | Hand-author seed corpus (13 rules + 5 skills + 5 memories) | <span style="color:#3fb950">**DONE**</span> | Wave 1 fleet (7 team leads, 3m 21s) |
 | **v4.1 scoping** | Repo-scoping mechanism + BetterAI repo seed | <span style="color:#3fb950">**DONE**</span> | Wave 2 (3 specialists, 3m 58s) |
 | **Phase 1.0 scaffold** | TS server + Docker + 7 MCP tools + CLI + tests + docs | <span style="color:#d29922">**SCAFFOLDED, doesn&rsquo;t compile**</span> | Wave 3 (5 team leads, 10m 45s, 7.2k LOC). 247 typecheck errors; 51/66 tests pass. |
-| **Phase 1.0 compile/test green** | Cross-team contract reconciliation; relax tsconfig OR strictness sweep | <span style="color:#f85149">**NEXT (Wave 5)**</span> | 3 critical contract issues; 1-2 day fix |
+| **Phase 1.0 compile/test green** | Cross-team contract reconciliation; relax tsconfig OR strictness sweep | <span style="color:#3fb950">**DONE**</span> | Wave 5 (2026-06-09): 0 typecheck errors, 66/66 tests. `/mcp` HTTP dispatch still placeholder — wire SDK transport before Item 2.5. |
 | **Phase 1.0 dogfooding gate** | 5 consecutive engineering days &times; &ge;5 rule fires &times; &ge;3 behavior changes | not started | Blocked by compile-green |
 | **Phase 1.5** | Embeddings + ast-grep + multi-arch + install polish | not started | Blocked by dogfooding gate |
 | **Phase 2** | VSCode extension | not started | Blocked by Phase 1.0 dogfooding |
@@ -96,6 +96,33 @@ Plus the orchestrator (you / Claude main loop) personally authored:
 - This handoff
 
 **Cumulative:** 84+ files / 9 commits on main / 4 review documents / 1 implementation roadmap / 1 docs harness.
+
+---
+
+## Wave 5 — DONE (2026-06-09, this session)
+
+`npm run typecheck` ✅ **0 errors** (was 247). `npm test` ✅ **66/66 passing** (was 51/66, 77%).
+
+### What landed
+
+- **Phase 0**: pre-flight chore commit (`c4d5502`) — @types/node bump, package-lock regen, gate.ts type annotation, Datadog static-analysis config.
+- **Specialist X** (`16c765f`, merged at `33fb1f3`): `src/server/scope/detect.ts` (`detectRepoRoot()` wrapper); 5 view methods on `CorpusReader` (`fetchRules/fetchSkills/fetchMemories/fetchRuleById/fetchCheckableRules`); `ContextCache.keyFor()`; lazy `JsonlAuditWriter.mkdirSync`; `AuditEvent.cache_hit?: boolean`; barrel `src/server/cache/index.ts` + `createContextCache()` factory.
+- **Specialist Y** (`18c9b3d`, merged at `66a8ad2`): rewrote all 7 `src/mcp-tools/*.ts` to use reconciled API + `ToolCallMeta` 3rd-arg pattern; wired `src/index.ts` to import + register 7 tools via `startServer({tools: [...]})`; relaxed 3 strictness flags; mapped 71 sites in `TODO-strictness-sweep.md`; recovered Wave 4's "already fixed" diff losses (`_filepath`, `readFileSync`, `AppliesWhenT`).
+- **Post-merge gate finalization** (`68362dc`): `src/server/retrieve/index.ts` cache-hit `Rule[] → AuditEventRuleEntry[]` mapping; rewrote `retrieve-context.test.ts` + `server-boot.test.ts` fixtures to the reconciled API; added programmatic `validate()` export to `src/cli/validate.ts` for `cli-offline.test.ts`.
+
+### Harness verification (in-process, this session)
+
+- Server boots via `startServer({tools: 7, env: {...}})` on `127.0.0.1:7777` with the seed corpus.
+- `GET /health` returns 200 (bearer bypass works); `auth.bypass` audit event emitted with full envelope (`{event_type: "explain", subagent_class: "main", parent_agent_session_id: null, tool_call_id: "auth.bypass", rules_returned: [{reason: "path=/health ip=... ua=..."}], ...}`).
+- 18 pre-existing rule frontmatter issues logged at corpus-load — Wave 1 seed needs to fix `applies_when.paths`/`applies_when.intents` shapes (string/null where array expected). Not Wave 5; tracked separately.
+- In-process tool dispatch fully proven by tests: `retrieve-context.test.ts` exercises the real `ToolContext`/`ToolCallMeta`/`CachedRetrieval` envelope path end-to-end.
+
+### Known follow-on (NOT in Wave 5 scope)
+
+- **`POST /mcp` HTTP dispatch is a v1.0 placeholder.** The handler returns `{error: "mcp_dispatch_unimplemented", detail: "Phase 1.0 placeholder — wire SDK's StreamableHttpServerTransport when it lands"}`. End-to-end MCP-over-HTTP cannot be verified until this is wired. The MCP SDK's streamable HTTP transport API was stabilizing at Wave 3 write-time — re-check the SDK now and finish the wiring. **Pre-req for Phase 4/5 of the original Wave 5 plan and for Item 2.5's `report_rule_application` flow.**
+- **Hardcoded `127.0.0.1:7777` / `localhost:7777` in `bearer.ts:32-36` allowedHosts list.** Surfaced in this session as a real harness blocker (port 27777 was rejected). Per the new corpus rule `.betterai/rules/STANDARDS/maintainability/config-from-env-not-hardcoded.md`, this should be env-driven (`BETTERAI_BIND_HOST`:`BETTERAI_MCP_PORT` already exist on the env schema). One-line fix; deferred to a chore commit.
+- **18 rule frontmatter shape issues** in the Wave-1 seed corpus (`applies_when.paths`/`intents` typed wrong). Track as a Wave 1.x chore.
+- **MCP transport completion → orchestration verification.** Once `/mcp` dispatch works, run Phase 5 of the original plan (subagent dispatch via Agent tool → audit shows two events sharing `parent_agent_session_id`; missed_retrieval fires; cache key isolation across `repo_root_detected`).
 
 ---
 
