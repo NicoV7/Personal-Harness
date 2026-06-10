@@ -36,16 +36,12 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { TooManyInFlightError } from "../cache/connection-limiter.js";
 import type { ConnectionLimiter } from "../cache/connection-limiter.js";
+import { IDLE_SESSION_GC_MS, RETRY_AFTER_MS } from "../../constants/transport.js";
 
-// Idle-session GC window.  Mirrors the sweep pattern in
-// src/server/audit/missed-retrieval.ts: we sweep opportunistically on
-// each request instead of holding a timer that would keep the process
-// alive.  30 minutes — MCP clients (Claude Code et al.) keep sessions
-// open across an editing session, so this only reaps abandoned ones.
-const IDLE_SESSION_GC_MS = 30 * 60_000;
-
-/** Suggested client backoff when the connection limiter overflows. */
-const RETRY_AFTER_MS = 250;
+// Idle-session GC + limiter-backoff windows live in src/constants/transport.ts.
+// We sweep opportunistically on each request (mirroring
+// src/server/audit/missed-retrieval.ts) instead of holding a timer that would
+// keep the process alive.
 
 // JSON-RPC error codes (mirroring the SDK transport's own choices).
 const JSONRPC_PARSE_ERROR = -32700;

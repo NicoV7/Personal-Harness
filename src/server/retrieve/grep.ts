@@ -20,6 +20,13 @@ import type {
   RetrievalMode,
   RetrievalScorer,
 } from "../../contracts/retrieval.js";
+import {
+  SCORE_BODY_HIT,
+  SCORE_INTENT_MATCH,
+  SCORE_PATH_MATCH,
+  SCORE_SYMBOL_MATCH,
+  SEVERITY_WEIGHT,
+} from "../../constants/retrieval.js";
 
 export interface MatchContext {
   file_paths: string[];
@@ -33,12 +40,6 @@ export interface ScoredArtifact<T> {
   score: number;
   reason: string;
 }
-
-const SEVERITY_WEIGHT: Record<Rule["severity"], number> = {
-  high: 3,
-  medium: 2,
-  low: 1,
-};
 
 /**
  * Score a rule against a context.  Components:
@@ -57,7 +58,7 @@ export function scoreRule(rule: Rule, ctx: MatchContext): ScoredArtifact<Rule> {
   if (aw?.paths?.length) {
     for (const p of ctx.file_paths) {
       if (aw.paths.some((g) => simpleGlob(g).test(p))) {
-        raw += 3;
+        raw += SCORE_PATH_MATCH;
         reasons.push(`path-match`);
         break;
       }
@@ -66,7 +67,7 @@ export function scoreRule(rule: Rule, ctx: MatchContext): ScoredArtifact<Rule> {
   if (aw?.symbols?.length) {
     const hit = ctx.symbols.some((s) => aw.symbols!.includes(s));
     if (hit) {
-      raw += 2;
+      raw += SCORE_SYMBOL_MATCH;
       reasons.push("symbol-match");
     }
   }
@@ -74,12 +75,12 @@ export function scoreRule(rule: Rule, ctx: MatchContext): ScoredArtifact<Rule> {
     const intent = ctx.intent.toLowerCase();
     const hit = aw.intents.some((kw) => intent.includes(kw.toLowerCase()));
     if (hit) {
-      raw += 2;
+      raw += SCORE_INTENT_MATCH;
       reasons.push("intent-match");
     }
   }
   if (literalHit(rule.body, ctx)) {
-    raw += 1;
+    raw += SCORE_BODY_HIT;
     reasons.push("body-text-hit");
   }
   const score = raw * SEVERITY_WEIGHT[rule.severity];
@@ -95,19 +96,19 @@ export function scoreSkill(
   const aw = skill.applies_when;
   if (aw?.paths?.length) {
     if (ctx.file_paths.some((p) => aw.paths!.some((g) => simpleGlob(g).test(p)))) {
-      raw += 3;
+      raw += SCORE_PATH_MATCH;
       reasons.push("path-match");
     }
   }
   const intent = ctx.intent.toLowerCase();
   if (aw?.intents?.length) {
     if (aw.intents.some((kw) => intent.includes(kw.toLowerCase()))) {
-      raw += 2;
+      raw += SCORE_INTENT_MATCH;
       reasons.push("intent-match");
     }
   }
   if (skill.when_to_use && partialKeywordHit(skill.when_to_use, ctx.intent)) {
-    raw += 2;
+    raw += SCORE_INTENT_MATCH;
     reasons.push("when-to-use-hit");
   }
   return { item: skill, score: raw, reason: reasons.join(",") || "no-match" };

@@ -29,6 +29,7 @@ import type {
   AuditEvent,
 } from '../server/main.js'
 import { CorpusReader } from '../server/corpus/reader.js'
+import { ValidationError } from '../errors/index.js'
 
 const baseInputSchema = z.object({
   path: z.string().optional(),
@@ -250,10 +251,3 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1) + '…'
 }
 
-class ValidationError extends Error {
-  readonly code = 'VALIDATION_ERROR'
-  constructor(message: string) {
-    super(message)
-    this.name = 'ValidationError'
-  }
-}

@@ -34,11 +34,27 @@ import type {
   ScoredArtifact,
 } from "../../contracts/retrieval.js";
 import { GrepScorer } from "./grep.js";
+import {
+  EMBED_BODY_EXCERPT_CHARS,
+  EMBEDDING_MODEL_ID,
+  HYBRID_EMBEDDING_WEIGHT,
+  HYBRID_SIMILARITY_FLOOR,
+} from "../../constants/retrieval.js";
 
 // ---- Named constants (no magic numbers) ----------------------------------
+//
+// The model id, body-excerpt width and hybrid blend weight/floor now live in
+// the central constants layer (src/constants/retrieval.ts). They are
+// re-exported here so existing importers (tests, callers) keep working.
 
-/** HuggingFace model id baked for Phase 1.5 retrieval. */
-export const EMBEDDING_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+export {
+  EMBEDDING_MODEL_ID,
+  HYBRID_EMBEDDING_WEIGHT,
+  HYBRID_SIMILARITY_FLOOR,
+} from "../../constants/retrieval.js";
+
+/** Local alias kept for back-compat with this module's original name. */
+export const BODY_EXCERPT_CHARS = EMBED_BODY_EXCERPT_CHARS;
 
 /**
  * Fallback model cache dir when the caller passes none.  The server
@@ -47,30 +63,6 @@ export const EMBEDDING_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
  * covers bare-process use (CLI, opt-in integration test).
  */
 export const FALLBACK_MODEL_CACHE_DIR = join(homedir(), ".betterai", "models");
-
-/**
- * How much of an artifact body is embedded alongside its title.  MiniLM
- * truncates around 256 wordpieces anyway; 512 chars keeps the embedded
- * text focused on the lede where rules/skills state their point.
- */
-export const BODY_EXCERPT_CHARS = 512;
-
-/**
- * Hybrid blend: maximum points a PERFECT semantic match can add on top
- * of the grep score.  Grep's exact signals stay dominant by design: a
- * single path-glob hit is worth raw 3 × severity weight (≥ 3 points),
- * so embeddings can re-rank near-ties and surface zero-keyword matches
- * but can never outrank an exact path/severity hit.
- */
-export const HYBRID_EMBEDDING_WEIGHT = 2;
-
-/**
- * Cosine-similarity floor below which the embedding contributes nothing.
- * MiniLM cosine between unrelated short texts hovers around 0.0–0.3;
- * 0.35 keeps random-topic noise from leaking points into every score
- * (which would break "grep mode and hybrid mode agree on exact hits").
- */
-export const HYBRID_SIMILARITY_FLOOR = 0.35;
 
 /**
  * Hybrid score formula (documented once, applied to all three kinds):

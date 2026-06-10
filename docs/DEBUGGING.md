@@ -191,4 +191,37 @@ A repo declared `use-snake-case` with the same id as the global rule, and you ex
 - **Fix the corpus** when: the rule didn't fire because the frontmatter is wrong, the domain-router doesn't route to it, the body H2 sections are missing, or the file is in the wrong shard.
 - **File a bug** when: the rule's frontmatter and body are valid per `rules/_meta/schema.md`, `betterai why` shows it should fire, but `betterai replay` shows the server didn't return it. That's a retrieval bug.
 
+---
+
+## Typed error codes (BAI-*)
+
+Every typed error in BetterAI extends `BetterAIError` (`src/errors/base.ts`) and
+carries a stable `code` plus an optional `httpStatus`. The classes + factories
+live in `src/errors/index.ts`; domain modules re-export them so existing import
+paths still work. Match on the **code**, not the human message — the message can
+drift, the code will not.
+
+Code-block allocation:
+
+| Block     | Domain                | Codes in use |
+|-----------|-----------------------|--------------|
+| `BAI-1xx` | config / bootstrap    | `BAI-101` bearer token missing · `BAI-102` bearer token empty/whitespace · `BAI-110` gate already in progress · `BAI-111` no gate in progress |
+| `BAI-2xx` | auth / authz          | (reserved — bearer 401 host/unauthorized envelopes not yet migrated to typed errors) |
+| `BAI-3xx` | contract / validation | `BAI-301` `ValidationError` (MCP tool input validation) |
+| `BAI-4xx` | retrieval / corpus    | `BAI-401` `RuleNotFoundError` (explain_rule miss) |
+| `BAI-5xx` | audit / io / resource | `BAI-501` `AuditIoError` · `BAI-502` `AuditValidationError` · `BAI-510` `TooManyInFlightError` (limiter overflow, HTTP 429) |
+
+### Legacy observable shapes (intentional)
+
+Two retrofitted errors keep a non-BAI `code` for backward compatibility and
+stash the BAI identifier on `baiCode`:
+
+- **`AuditIoError`** — `.code` is the underlying **errno** string (`"EACCES"`,
+  `"EISDIR"`, …) or `null`; `.baiCode === "BAI-501"`; `.path` is the audit path;
+  `.cause` is the original errno error.
+- **`TooManyInFlightError`** — `.code === "too_many_in_flight"`, `.status === 429`,
+  `.baiCode === "BAI-510"`.
+
+Everywhere else, `.code` is the BAI identifier directly.
+
 The corpus is the moat, not the plumbing. Spending an extra five minutes per rule on the frontmatter saves hours of debugging later.

@@ -33,6 +33,13 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, w
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { DEFAULT_MCP_PORT, SCHEMA_VERSION } from "../contracts/env.js";
+import {
+  GATE_TARGET_BEHAVIOR_CHANGES,
+  GATE_TARGET_DAYS,
+  GATE_TARGET_SESSIONS,
+  HEALTH_PROBE_TIMEOUT_MS,
+  MS_PER_DAY,
+} from "../constants/cli.js";
 import { validate } from "./validate.js";
 
 interface AuditEvent {
@@ -50,41 +57,28 @@ interface CheckResult {
   required: string;
 }
 
-// ---- Gate targets (named, per STANDARDS: no magic numbers) ---------------
+// Gate targets, the health-probe budget and MS_PER_DAY now live in the
+// central constants layer (src/constants/cli.ts) per STANDARDS:
+// no-magic-numbers-import-from-constants.
 
-/** The dogfooding window length, in calendar days. */
-const GATE_TARGET_DAYS = 5;
-/** Distinct sessions that must see >=1 rule returned during the window. */
-const GATE_TARGET_SESSIONS = 5;
-/** Visible behavior changes required during the window. */
-const GATE_TARGET_BEHAVIOR_CHANGES = 3;
-/** Best-effort /health probe budget for the day-1 checklist. */
-const HEALTH_PROBE_TIMEOUT_MS = 750;
 /** Filename of the gate state file inside the BetterAI home dir. */
 const GATE_FILENAME = "gate.json";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 // ---- Typed errors ---------------------------------------------------------
-
-/** Thrown by --start when a gate.json already exists. Maps to exit 1. */
-export class GateInProgressError extends Error {
-  constructor(public readonly gatePath: string, public readonly startedAt: string) {
-    super(
-      `a dogfooding gate is already in progress (started ${startedAt}, state at ${gatePath}). ` +
-        `Run 'betterai gate --status' to inspect it or 'betterai gate --abort' to archive it.`,
-    );
-    this.name = "GateInProgressError";
-  }
-}
-
-/** Thrown by --status / --abort when no gate.json exists. Maps to exit 2. */
-export class NoGateInProgressError extends Error {
-  constructor(public readonly gatePath: string) {
-    super(`no dogfooding gate in progress (expected state at ${gatePath}). Run 'betterai gate --start' first.`);
-    this.name = "NoGateInProgressError";
-  }
-}
+//
+// GateInProgressError (BAI-110, exit 1) and NoGateInProgressError (BAI-111,
+// exit 2) now live in the central errors layer per
+// typed-errors-from-errors-layer. Messages + fields (gatePath/startedAt) are
+// unchanged. Re-exported so callers + tests that import them from this module
+// keep working.
+export {
+  GateInProgressError,
+  NoGateInProgressError,
+} from "../errors/index.js";
+import {
+  GateInProgressError,
+  NoGateInProgressError,
+} from "../errors/index.js";
 
 // ---- State file shape ------------------------------------------------------
 
@@ -350,7 +344,7 @@ function runWeeklyGate(args: string[]): number {
   // Window: the most recent 7-day period (week N is informational, used in the
   // header — we always evaluate "the last 7 days of activity in the log",
   // which is the only honest measurement).
-  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  const windowMs = 7 * MS_PER_DAY;
   const now = Date.now();
   const cutoff = now - windowMs;
 
@@ -383,22 +377,22 @@ function runWeeklyGate(args: string[]): number {
 
   const checks: CheckResult[] = [
     {
-      name: "5 consecutive days of activity",
-      pass: consecutive >= 5,
+      name: `${GATE_TARGET_DAYS} consecutive days of activity`,
+      pass: consecutive >= GATE_TARGET_DAYS,
       observed: `${consecutive} consecutive days (across ${distinctDays.size} total active day(s))`,
-      required: "≥5 consecutive days",
+      required: `≥${GATE_TARGET_DAYS} consecutive days`,
     },
     {
-      name: "≥5 distinct rules fired",
-      pass: distinctRules.size >= 5,
+      name: `≥${GATE_TARGET_SESSIONS} distinct rules fired`,
+      pass: distinctRules.size >= GATE_TARGET_SESSIONS,
       observed: `${distinctRules.size} distinct rule(s) fired`,
-      required: "≥5 distinct rules",
+      required: `≥${GATE_TARGET_SESSIONS} distinct rules`,
     },
     {
-      name: "≥3 visible behavior changes",
-      pass: behaviorChanges >= 3,
+      name: `≥${GATE_TARGET_BEHAVIOR_CHANGES} visible behavior changes`,
+      pass: behaviorChanges >= GATE_TARGET_BEHAVIOR_CHANGES,
       observed: `${behaviorChanges} retrieve→apply chain(s)`,
-      required: "≥3 retrieve→apply chains",
+      required: `≥${GATE_TARGET_BEHAVIOR_CHANGES} retrieve→apply chains`,
     },
   ];
 
@@ -432,7 +426,7 @@ function countConsecutive(sortedDays: string[]): number {
   for (let i = 1; i < sortedDays.length; i++) {
     const prev = Date.parse(sortedDays[i - 1] + "T00:00:00Z");
     const curr = Date.parse(sortedDays[i] + "T00:00:00Z");
-    const diffDays = Math.round((curr - prev) / (24 * 60 * 60 * 1000));
+    const diffDays = Math.round((curr - prev) / MS_PER_DAY);
     if (diffDays === 1) {
       run++;
       if (run > best) best = run;

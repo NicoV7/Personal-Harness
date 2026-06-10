@@ -3,6 +3,9 @@
 .claude/worktrees/
 node_modules/
 *.log
+.env
+.env.*
+!.env.example
 .agents/
 .github/agents/
 .n8nac/

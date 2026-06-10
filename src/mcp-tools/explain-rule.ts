@@ -18,6 +18,7 @@ import type {
   Rule,
   AuditEvent,
 } from '../server/main.js'
+import { RuleNotFoundError } from '../errors/index.js'
 
 const inputSchema = z.object({
   rule_id: z
@@ -156,11 +157,3 @@ const tool: McpTool<unknown, Rule> = {
 }
 
 export default tool
-
-class RuleNotFoundError extends Error {
-  readonly code = 'RULE_NOT_FOUND'
-  constructor(message: string) {
-    super(message)
-    this.name = 'RuleNotFoundError'
-  }
-}

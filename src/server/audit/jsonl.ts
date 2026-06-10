@@ -19,6 +19,11 @@ import {
   statSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import {
+  AUDIT_FILE_MODE,
+  AUDIT_MAX_AGE_MS,
+  AUDIT_MAX_BYTES,
+} from "../../constants/audit.js";
 
 export type SubagentClass =
   | "main"
@@ -75,41 +80,14 @@ export interface AuditEvent {
   downstream_violations: null;
 }
 
-export class AuditValidationError extends Error {
-  constructor(msg: string) {
-    super(msg);
-    this.name = "AuditValidationError";
-  }
-}
-
-/**
- * Typed wrapper for every filesystem failure the audit writer can hit
- * (EACCES on mkdir, EISDIR on a directory-shaped audit path, ENOENT on
- * a vanished parent dir, ENOSPC, ...).  Callers catch THIS — never a
- * raw NodeJS.ErrnoException — per
- * .betterai/rules/STANDARDS/error-handling/typed-errors-from-errors-layer.
- * The original errno error rides along as `cause`; the syscall code is
- * surfaced on `.code` so handlers can branch without string-matching.
- */
-export class AuditIoError extends Error {
-  /** The underlying errno code (e.g. "EACCES", "EISDIR"), if known. */
-  readonly code: string | null;
-  /** The audit path the failed operation targeted. */
-  readonly path: string;
-
-  constructor(msg: string, opts: { path: string; cause?: unknown }) {
-    super(msg, { cause: opts.cause });
-    this.name = "AuditIoError";
-    this.path = opts.path;
-    const cause = opts.cause as NodeJS.ErrnoException | undefined;
-    this.code = typeof cause?.code === "string" ? cause.code : null;
-  }
-}
-
-const MAX_BYTES = 100 * 1024 * 1024; // 100 MB
-const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-/** Audit files are owner read/write + group read; never world-readable. */
-const AUDIT_FILE_MODE = 0o640;
+// AuditValidationError (BAI-502) and AuditIoError (BAI-501) now live in the
+// central errors layer per typed-errors-from-errors-layer. Both preserve their
+// observable shapes: AuditValidationError keeps `.name === "AuditValidationError"`;
+// AuditIoError keeps the errno string on `.code`, the audit path on `.path`,
+// and the original errno error on `.cause`. Re-exported so existing importers
+// (this module, the audit-writer-io tests) are unchanged.
+export { AuditIoError, AuditValidationError } from "../../errors/index.js";
+import { AuditIoError, AuditValidationError } from "../../errors/index.js";
 
 /**
  * Validate the parent-session invariant.  Called from `append` so no
@@ -153,8 +131,8 @@ export class JsonlAuditWriter {
 
   constructor(opts: AuditWriterOptions) {
     this.path = opts.path;
-    this.maxBytes = opts.maxBytes ?? MAX_BYTES;
-    this.maxAgeMs = opts.maxAgeMs ?? MAX_AGE_MS;
+    this.maxBytes = opts.maxBytes ?? AUDIT_MAX_BYTES;
+    this.maxAgeMs = opts.maxAgeMs ?? AUDIT_MAX_AGE_MS;
     this.now = opts.now ?? (() => new Date());
   }
 

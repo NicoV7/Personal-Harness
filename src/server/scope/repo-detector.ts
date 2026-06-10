@@ -17,6 +17,10 @@
 
 import { existsSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
+import {
+  MAX_WALK_UP_DEPTH,
+  REPO_DETECT_CACHE_TTL_MS,
+} from "../../constants/scope.js";
 
 export interface RepoDetection {
   repo_root: string | null;
@@ -55,7 +59,7 @@ export class RepoDetector {
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(opts: RepoDetectorOptions = {}) {
-    this.ttlMs = opts.ttlMs ?? 60_000;
+    this.ttlMs = opts.ttlMs ?? REPO_DETECT_CACHE_TTL_MS;
     this.stopAt = new Set(
       (opts.stopAt ?? ["/", process.env.HOME ?? "/"]).map((p) => resolve(p)),
     );
@@ -102,7 +106,7 @@ export class RepoDetector {
   private walkUp(start: string): RepoDetection {
     let dir = isDirectory(start) ? start : dirname(start);
     // Cap the walk so a runaway symlink can't loop forever.
-    for (let i = 0; i < 64; i += 1) {
+    for (let i = 0; i < MAX_WALK_UP_DEPTH; i += 1) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         const betterai = join(dir, ".betterai");

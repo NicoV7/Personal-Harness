@@ -1,20 +1,16 @@
 /**
  * Cache + connection-limiter policy constants.
  *
- * Per `.betterai/rules/STANDARDS/maintainability/no-magic-numbers-import-from-constants`
- * — which names `context-hash.ts:78-79` as its canonical anti-pattern — the LRU
- * capacity/TTL and the limiter backpressure thresholds are policy values that must
- * live in ONE named place, not be re-spelled at every construction site.
+ * The canonical definitions now live in the central constants layer
+ * (src/constants/cache.ts) per
+ * `.betterai/rules/STANDARDS/maintainability/no-magic-numbers-import-from-constants`.
+ * This module re-exports them so existing importers under src/server/cache/
+ * keep working with no second copy of the values (DRY).
  */
 
-/** Max entries in the retrieval LRU cache before eviction. */
-export const LRU_DEFAULT_MAX = 256;
-
-/** Time-to-live for an LRU entry, in milliseconds (staleness budget). */
-export const LRU_DEFAULT_TTL_MS = 60_000;
-
-/** Max concurrent in-flight dispatches before requests queue. */
-export const LIMITER_DEFAULT_MAX_IN_FLIGHT = 16;
-
-/** Max queued waiters before the limiter rejects with TooManyInFlightError (429). */
-export const LIMITER_DEFAULT_QUEUE_MAX = 64;
+export {
+  LRU_DEFAULT_MAX,
+  LRU_DEFAULT_TTL_MS,
+  LIMITER_DEFAULT_MAX_IN_FLIGHT,
+  LIMITER_DEFAULT_QUEUE_MAX,
+} from "../../constants/cache.js";

@@ -16,9 +16,10 @@
 // grow unboundedly under churn.
 
 import type { AuditLogFn, SubagentClass } from "./jsonl.js";
-
-const DEFAULT_RECENCY_MS = 60_000;
-const SESSION_GC_MS = 5 * 60_000;
+import {
+  MISSED_RETRIEVAL_RECENCY_MS,
+  MISSED_RETRIEVAL_SESSION_GC_MS,
+} from "../../constants/audit.js";
 
 /**
  * Tools the agent calls that are read-only and should *not* require a
@@ -75,7 +76,7 @@ export class MissedRetrievalDetector {
     private readonly auditLog: AuditLogFn,
     opts: MissedRetrievalOptions = {},
   ) {
-    this.recencyMs = opts.recencyMs ?? DEFAULT_RECENCY_MS;
+    this.recencyMs = opts.recencyMs ?? MISSED_RETRIEVAL_RECENCY_MS;
     this.now = opts.now ?? (() => Date.now());
   }
 
@@ -134,7 +135,7 @@ export class MissedRetrievalDetector {
     // configured recencyMs longer than SESSION_GC_MS, sweeping at the
     // 5-minute floor would delete still-covered sessions and emit FALSE
     // missed_retrieval events.
-    const gcMs = Math.max(SESSION_GC_MS, this.recencyMs);
+    const gcMs = Math.max(MISSED_RETRIEVAL_SESSION_GC_MS, this.recencyMs);
     for (const [k, v] of this.sessions) {
       if (nowMs - v.lastRetrievalAtMs > gcMs) this.sessions.delete(k);
     }

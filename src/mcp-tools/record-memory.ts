@@ -29,6 +29,7 @@ import type {
   AuditEvent,
 } from '../server/main.js'
 import { detectRepoRoot } from '../server/scope/detect.js'
+import { ValidationError } from '../errors/index.js'
 
 const memoryFrontmatterSchema = z
   .object({
@@ -193,14 +194,6 @@ const tool: McpTool<unknown, RecordMemoryOutput> = {
 }
 
 export default tool
-
-class ValidationError extends Error {
-  readonly code = 'VALIDATION_ERROR'
-  constructor(message: string) {
-    super(message)
-    this.name = 'ValidationError'
-  }
-}
 
 /**
  * Serialize a {frontmatter, body} pair to the on-disk markdown shape:

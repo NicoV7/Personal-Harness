@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { detectRepoRoot } from "./_shared/repo-root.js";
 import { parseFrontmatter } from "./_shared/frontmatter.js";
+import { DEFAULT_DIGEST_DAYS, MS_PER_DAY } from "../constants/cli.js";
 
 interface AuditEvent {
   event_type: string;
@@ -23,7 +24,7 @@ interface AuditEvent {
 
 export function runReplay(args: string[]): number {
   // Default to 7 days; accept --since 7d / 14d / 30d.
-  let sinceDays = 7;
+  let sinceDays = DEFAULT_DIGEST_DAYS;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--since") {
       const v = args[++i] ?? "";
@@ -45,7 +46,7 @@ export function runReplay(args: string[]): number {
     return 0;
   }
 
-  const cutoff = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - sinceDays * MS_PER_DAY;
   const events = readFileSync(auditPath, "utf8")
     .split("\n")
     .filter((l) => l.trim().length > 0)

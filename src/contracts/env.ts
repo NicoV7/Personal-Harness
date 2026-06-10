@@ -26,7 +26,6 @@
 
 import { z } from "zod";
 import { RETRIEVAL_MODES } from "./retrieval.js";
-import type { AssertTrue, MutuallyAssignable } from "./audit.js";
 
 // ---- Schema version --------------------------------------------------------
 
@@ -146,17 +145,11 @@ export function allowedHostsFromProcessEnv(
   );
 }
 
-// ---- Drift guards (typecheck-time; zero runtime cost) -------------------------
+// ---- Drift guard (no longer needed) ------------------------------------------
 //
-// Superset check: every key of the live ResolvedEnv must exist on the
-// contract ResolvedEnv with an identical type. `Pick` itself errors if a
-// live key is missing here; the mutual-assignability check errors if a
-// shared key's type differs.
-
-import type { ResolvedEnv as LiveResolvedEnv } from "../server/main.js";
-
-export type EnvContractDriftChecks = [
-  AssertTrue<
-    MutuallyAssignable<Pick<ResolvedEnv, keyof LiveResolvedEnv>, LiveResolvedEnv>
-  >,
-];
+// This module USED to import `ResolvedEnv` back from src/server/main.js and
+// assert a superset relation, because main.ts declared its own duplicate
+// EnvSchema. That duplicate has been removed: main.ts now imports EnvSchema +
+// ResolvedEnv FROM this module, so there is a single source of truth and
+// nothing to drift against. Re-importing from main.js here would also create
+// an import cycle (main → env → main).

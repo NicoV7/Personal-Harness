@@ -30,18 +30,21 @@ import type {
   ServerNotification,
   ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z, type ZodRawShape } from "zod";
+import type { ZodRawShape } from "zod";
 
 import { bearerMiddleware } from "./auth/bearer.js";
-import {
-  allowedHostsFromEnv,
-  DEFAULT_MODEL_CACHE_DIR,
-  DEFAULT_RETRIEVAL_MODE,
-} from "../contracts/env.js";
-import { RETRIEVAL_MODES } from "../contracts/retrieval.js";
+import { allowedHostsFromEnv, EnvSchema } from "../contracts/env.js";
+import type { ResolvedEnv } from "../contracts/env.js";
+export type { ResolvedEnv } from "../contracts/env.js";
 import { createScorer } from "./retrieve/embeddings.js";
 import { ConnectionLimiter } from "./cache/connection-limiter.js";
 import { ContextCache } from "./cache/context-hash.js";
+import {
+  LRU_DEFAULT_MAX,
+  LRU_DEFAULT_TTL_MS,
+  LIMITER_DEFAULT_MAX_IN_FLIGHT,
+  LIMITER_DEFAULT_QUEUE_MAX,
+} from "../constants/cache.js";
 import {
   JsonlAuditWriter,
   type AuditEvent,
@@ -100,34 +103,12 @@ export interface ToolCallMeta {
 }
 
 // ---- Env --------------------------------------------------------------
-
-const EnvSchema = z.object({
-  BETTERAI_CORPUS_ROOT: z.string().default("/data"),
-  BETTERAI_AUDIT_PATH: z.string().default("/data/audit/audit.jsonl"),
-  BETTERAI_PROJECTS_ROOT: z.string().default("/projects"),
-  BETTERAI_MCP_PORT: z.coerce.number().int().positive().default(7777),
-  BETTERAI_TOKEN_PATH: z.string().default("/data/token"),
-  BETTERAI_LOG_LEVEL: z
-    .enum(["trace", "debug", "info", "warn", "error"])
-    .default("info"),
-  /** When set, bind to this host instead of 127.0.0.1 (tests only). */
-  BETTERAI_BIND_HOST: z.string().default("127.0.0.1"),
-  /**
-   * Comma-separated `host:port` allowlist override for the bearer
-   * middleware's DNS-rebinding check. Unset → derived from
-   * BETTERAI_BIND_HOST + BETTERAI_MCP_PORT (contracts/env.ts
-   * `allowedHostsFromEnv`).
-   */
-  BETTERAI_ALLOWED_HOSTS: z.string().optional(),
-  /** Which RetrievalScorer implementation the orchestrator uses. */
-  BETTERAI_RETRIEVAL_MODE: z
-    .enum(RETRIEVAL_MODES)
-    .default(DEFAULT_RETRIEVAL_MODE),
-  /** Directory holding the baked MiniLM model files (Phase 1.5). */
-  BETTERAI_MODEL_CACHE_DIR: z.string().default(DEFAULT_MODEL_CACHE_DIR),
-});
-
-export type ResolvedEnv = z.infer<typeof EnvSchema>;
+//
+// The env schema is the SHARED CONTRACT in src/contracts/env.ts (the env
+// layer, per config-from-env-not-hardcoded). This module imports it rather
+// than re-declaring a second copy of the same defaults — there is now ONE
+// EnvSchema in the codebase. ResolvedEnv is re-exported at the top of this
+// module for Team C consumers.
 
 function readEnv(): ResolvedEnv {
   const parsed = EnvSchema.safeParse(process.env);
@@ -187,8 +168,14 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
   const auditWriter = new JsonlAuditWriter({ path: env.BETTERAI_AUDIT_PATH });
   const auditLog: AuditLogFn = (event: AuditEvent) => auditWriter.append(event);
   const repoDetector = new RepoDetector();
-  const cache = new ContextCache({ max: 256, ttlMs: 60_000 });
-  const limiter = new ConnectionLimiter({ maxInFlight: 16, queueMax: 64 });
+  const cache = new ContextCache({
+    max: LRU_DEFAULT_MAX,
+    ttlMs: LRU_DEFAULT_TTL_MS,
+  });
+  const limiter = new ConnectionLimiter({
+    maxInFlight: LIMITER_DEFAULT_MAX_IN_FLIGHT,
+    queueMax: LIMITER_DEFAULT_QUEUE_MAX,
+  });
   const missedRetrieval = new MissedRetrievalDetector(auditLog);
 
   const router = DomainRouter.fromFile(

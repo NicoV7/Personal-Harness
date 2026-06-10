@@ -39,45 +39,20 @@ import {
 
 // ---- Typed errors -------------------------------------------------------
 //
-// Per STANDARDS/error-handling/typed-errors-from-errors-layer: stable
-// codes from the BAI-1xx bootstrap block. These live in the auth layer
-// until the central src/errors/ layer lands (migration step 1 of that
-// rule); they are exported so callers and tests can match on the type
-// and code rather than on message text.
-
-/** Base class for bearer bootstrap failures. */
-export class BearerTokenError extends Error {
-  constructor(
-    /** Stable error code (BAI-1xx bootstrap block). */
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = new.target.name;
-  }
-}
-
-/** BAI-101: the token file does not exist at the configured path. */
-export class BearerTokenMissingError extends BearerTokenError {
-  static readonly code = "BAI-101";
-  constructor(path: string) {
-    super(
-      BearerTokenMissingError.code,
-      `bearer token not found at ${path}; install script must write it before startup`,
-    );
-  }
-}
-
-/** BAI-102: the token file exists but is empty or whitespace-only. */
-export class BearerTokenEmptyError extends BearerTokenError {
-  static readonly code = "BAI-102";
-  constructor(path: string) {
-    super(
-      BearerTokenEmptyError.code,
-      `bearer token at ${path} is empty or whitespace-only; refusing to start with a token that matches nothing`,
-    );
-  }
-}
+// Per STANDARDS/error-handling/typed-errors-from-errors-layer the bearer
+// bootstrap errors now live in the central src/errors/ layer (BAI-1xx
+// bootstrap block) and are re-exported here so existing callers + tests that
+// import them from this module keep working. Codes (BAI-101/102) and messages
+// are unchanged.
+export {
+  BearerTokenError,
+  BearerTokenMissingError,
+  BearerTokenEmptyError,
+} from "../../errors/index.js";
+import {
+  BearerTokenMissingError,
+  BearerTokenEmptyError,
+} from "../../errors/index.js";
 
 // ---- Options -------------------------------------------------------------
 
