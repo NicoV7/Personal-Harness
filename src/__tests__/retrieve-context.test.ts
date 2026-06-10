@@ -35,6 +35,11 @@ interface RetrieveContextOutput {
   skills: RetrievedItem[];
   memories: RetrievedItem[];
   overridden_global_ids: string[];
+  scopes_queried?: ("global" | "repo")[];
+  // G5-M1 structured no-match discriminant (src/contracts/retrieval.ts)
+  match?: "matched" | "none";
+  reason?: "no_match";
+  query_echo?: { intent: string; file_paths: string[]; symbols: string[] };
 }
 
 // Test ctx interface aligned with the reconciled Wave 5 ToolContext API:
@@ -268,5 +273,125 @@ describe("retrieve_context against an in-memory rules dir", () => {
     );
     expect(out.rules.every(r => r.scope === "global")).toBe(true);
     expect(out.overridden_global_ids).toEqual([]);
+  });
+
+  // ---- G5-M1: structured no-match (docs/RELIABILITY-TEST-GAPS.md) ----------
+  //
+  // "Search returns nothing" is the fault-tolerance mode most likely to
+  // fire in dogfooding. The contract: zero artifacts across every kind
+  // returns { match: "none", reason: "no_match", query_echo, ... } —
+  // a first-class shape agents can branch on — never bare empty arrays.
+
+  function makeEmptyCorpusCtx() {
+    // A corpus with nothing in it, regardless of scope or intent.
+    const ctx = makeCtx();
+    ctx.corpusReader = {
+      fetchRules: () => [],
+      fetchSkills: () => [],
+      fetchMemories: () => [],
+    };
+    return ctx;
+  }
+
+  test("empty corpus returns the structured no-match shape, not bare empty arrays", async () => {
+    // Arrange
+    const ctx = makeEmptyCorpusCtx();
+
+    // Act
+    const out = await retrieveContext.handler(
+      {
+        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
+        scope: "merged",
+      },
+      ctx,
+      fakeMeta,
+    );
+
+    // Assert: explicit discriminant + echo of the evaluated query.
+    expect(out.match).toBe("none");
+    expect(out.reason).toBe("no_match");
+    expect(out.query_echo).toEqual({
+      intent: "rename a variable",
+      file_paths: [join(repoRoot, "src/x.ts")],
+      symbols: [],
+    });
+    expect(out.scopes_queried).toEqual(["global", "repo"]);
+    // The v1.0 arrays are still present (additive extension), just empty.
+    expect(out.rules).toEqual([]);
+    expect(out.skills).toEqual([]);
+    expect(out.memories).toEqual([]);
+  });
+
+  test("non-empty corpus with a non-matching query also returns the no-match shape", async () => {
+    // Arrange: reader has rules, but none match this intent.
+    const ctx = makeCtx();
+    const realFetchRules = ctx.corpusReader.fetchRules;
+    ctx.corpusReader.fetchRules = (input) =>
+      input.intent?.includes("rename") ? realFetchRules(input) : [];
+
+    // Act
+    const out = await retrieveContext.handler(
+      {
+        context: {
+          file_paths: [join(repoRoot, "src/x.ts")],
+          intent: "deploy a kubernetes operator",
+        },
+        scope: "merged",
+      },
+      ctx,
+      fakeMeta,
+    );
+
+    // Assert
+    expect(out.match).toBe("none");
+    expect(out.reason).toBe("no_match");
+    expect(out.query_echo?.intent).toBe("deploy a kubernetes operator");
+    expect(out.rules).toEqual([]);
+  });
+
+  test("no-match retrieval still emits exactly one audit event with rules_returned: []", async () => {
+    // Arrange
+    const events: { event_type: string; rules_returned: unknown[]; cache_hit?: boolean }[] = [];
+    const ctx = makeEmptyCorpusCtx();
+    ctx.auditLog = (e: unknown) =>
+      events.push(e as { event_type: string; rules_returned: unknown[] });
+
+    // Act
+    await retrieveContext.handler(
+      {
+        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "anything at all" },
+        scope: "merged",
+      },
+      ctx,
+      fakeMeta,
+    );
+
+    // Assert: the no-match path stays observable in the audit trail.
+    expect(events.length).toBe(1);
+    expect(events[0].event_type).toBe("retrieve");
+    expect(events[0].rules_returned).toEqual([]);
+  });
+
+  test("matching query is unchanged except for the additive match: 'matched' discriminant", async () => {
+    // Arrange
+    const ctx = makeCtx();
+
+    // Act
+    const out = await retrieveContext.handler(
+      {
+        context: { file_paths: [join(repoRoot, "src/x.ts")], intent: "rename a variable" },
+        scope: "merged",
+      },
+      ctx,
+      fakeMeta,
+    );
+
+    // Assert: matched outcome — discriminant present, no no-match fields,
+    // and the v1.0 merge/override behavior intact.
+    expect(out.match).toBe("matched");
+    expect(out.reason).toBeUndefined();
+    expect(out.query_echo).toBeUndefined();
+    expect(out.rules.length).toBeGreaterThan(0);
+    expect(out.overridden_global_ids).toContain("use-snake-case");
   });
 });

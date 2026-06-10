@@ -12,6 +12,7 @@
 
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   renameSync,
@@ -81,8 +82,34 @@ export class AuditValidationError extends Error {
   }
 }
 
+/**
+ * Typed wrapper for every filesystem failure the audit writer can hit
+ * (EACCES on mkdir, EISDIR on a directory-shaped audit path, ENOENT on
+ * a vanished parent dir, ENOSPC, ...).  Callers catch THIS — never a
+ * raw NodeJS.ErrnoException — per
+ * .betterai/rules/STANDARDS/error-handling/typed-errors-from-errors-layer.
+ * The original errno error rides along as `cause`; the syscall code is
+ * surfaced on `.code` so handlers can branch without string-matching.
+ */
+export class AuditIoError extends Error {
+  /** The underlying errno code (e.g. "EACCES", "EISDIR"), if known. */
+  readonly code: string | null;
+  /** The audit path the failed operation targeted. */
+  readonly path: string;
+
+  constructor(msg: string, opts: { path: string; cause?: unknown }) {
+    super(msg, { cause: opts.cause });
+    this.name = "AuditIoError";
+    this.path = opts.path;
+    const cause = opts.cause as NodeJS.ErrnoException | undefined;
+    this.code = typeof cause?.code === "string" ? cause.code : null;
+  }
+}
+
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/** Audit files are owner read/write + group read; never world-readable. */
+const AUDIT_FILE_MODE = 0o640;
 
 /**
  * Validate the parent-session invariant.  Called from `append` so no
@@ -131,11 +158,89 @@ export class JsonlAuditWriter {
     this.now = opts.now ?? (() => new Date());
   }
 
+  /**
+   * FAILURE CONTRACT (decided for G3, docs/RELIABILITY-TEST-GAPS.md):
+   * `append` THROWS a typed `AuditIoError` on any filesystem failure —
+   * it never degrades to a stderr warning, never buffers, never drops.
+   *
+   * Why throw-on-append instead of throw-at-construction or
+   * degrade-with-a-failed-flag:
+   *   - Construction must stay filesystem-free (the lazy `_dirInitialized`
+   *     design below): server-boot tests construct the writer with a
+   *     default /data path the test process cannot mkdir, and `startServer`
+   *     must not blow up before the transport is even bound.
+   *   - Degrading silently is the one unacceptable outcome: the audit log
+   *     is BetterAI's ONLY observability surface, so a swallowed append is
+   *     a blackholed compliance trail.  A thrown AuditIoError propagates
+   *     out of the tool handler, the MCP call fails loudly, and the agent
+   *     (or its parent) sees the failure instead of a normal-looking
+   *     success with a silently-missing audit event.
+   *
+   * RECOVERY SEMANTICS:
+   *   - Parent dir removed mid-run (ENOENT): we re-run the lazy mkdir and
+   *     retry the append exactly once.  Only if recovery also fails does
+   *     the typed error surface.  No events are lost on a recoverable
+   *     dir-removal.
+   *   - Audit file rotated/renamed/deleted externally mid-run: the next
+   *     append simply recreates a fresh file at the configured path
+   *     (O_APPEND creates on absence) — subsequent events land in the new
+   *     file, none are lost.
+   */
   append(event: AuditEvent): void {
     validateAuditEvent(event);
+    const line = JSON.stringify(event) + "\n";
+    try {
+      this.writeLine(line);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        // Parent dir vanished after a previous successful append.
+        // Lazy-mkdir recovery: reset the init flag and retry once.
+        this._dirInitialized = false;
+        try {
+          this.writeLine(line);
+          return;
+        } catch (retryErr) {
+          throw this.wrapIoError(retryErr);
+        }
+      }
+      throw this.wrapIoError(err);
+    }
+  }
+
+  /** ensureDir + EISDIR guard + rotation + append + mode enforcement. */
+  private writeLine(line: string): void {
     this.ensureDir();
+    // Guard the misconfiguration hit live on 2026-06-10: BETTERAI_AUDIT_PATH
+    // pointing at an EXISTING DIRECTORY.  appendFileSync would die with a
+    // raw EISDIR; surface a typed, actionable error instead.
+    const existedBefore = existsSync(this.path);
+    if (existedBefore && statSync(this.path).isDirectory()) {
+      throw new AuditIoError(
+        `audit path ${this.path} is a directory — BETTERAI_AUDIT_PATH must point at a .jsonl FILE (e.g. ${this.path}/audit.jsonl)`,
+        { path: this.path },
+      );
+    }
     this.rotateIfNeeded();
-    appendFileSync(this.path, JSON.stringify(event) + "\n", { mode: 0o640 });
+    const createsFile = !existsSync(this.path);
+    appendFileSync(this.path, line, { mode: AUDIT_FILE_MODE });
+    if (createsFile) {
+      // appendFileSync's `mode` is masked by the process umask; enforce
+      // the exact 0o640 contract on every freshly created file.
+      chmodSync(this.path, AUDIT_FILE_MODE);
+    }
+  }
+
+  private wrapIoError(err: unknown): Error {
+    if (err instanceof AuditIoError || err instanceof AuditValidationError) {
+      return err;
+    }
+    const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
+    return new AuditIoError(
+      `audit append to ${this.path} failed (${code}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { path: this.path, cause: err },
+    );
   }
 
   private ensureDir(): void {

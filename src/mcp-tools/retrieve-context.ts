@@ -31,6 +31,7 @@ import type {
 } from '../server/main.js'
 import { detectRepoRoot } from '../server/scope/detect.js'
 import type { CachedRetrieval } from '../server/cache/context-hash.js'
+import type { RetrieveMatchInfo } from '../contracts/retrieval.js'
 
 const contextSchema = z
   .object({
@@ -49,7 +50,7 @@ const inputSchema = z.object({
 
 type Input = z.infer<typeof inputSchema>
 
-interface RetrieveContextOutput {
+interface RetrieveContextBase {
   rules: Rule[]
   skills: Skill[]
   memories: Memory[]
@@ -57,6 +58,15 @@ interface RetrieveContextOutput {
   repo_root_detected: string | null
   scopes_queried: Array<'global' | 'repo'>
 }
+
+/**
+ * G5-M1: the output carries a first-class `match` discriminant
+ * (RetrieveMatchInfo from src/contracts/retrieval.ts). A retrieval that
+ * matches NOTHING returns `{ match: "none", reason: "no_match",
+ * query_echo, scopes_queried, ...empty lists }` so agents branch on it
+ * explicitly instead of inferring from bare empty arrays.
+ */
+type RetrieveContextOutput = RetrieveContextBase & RetrieveMatchInfo
 
 const DESCRIPTION =
   'ALWAYS call retrieve_context as your first action on any code task. ' +
@@ -150,7 +160,7 @@ const tool: McpTool<unknown, RetrieveContextOutput> = {
         top_k_per_kind,
       )
 
-      result = {
+      const base: RetrieveContextBase = {
         rules,
         skills,
         memories,
@@ -158,6 +168,24 @@ const tool: McpTool<unknown, RetrieveContextOutput> = {
         repo_root_detected: repoRootDetected,
         scopes_queried: scopesQueried,
       }
+
+      // G5-M1: zero artifacts across every kind is a first-class outcome,
+      // not bare empty arrays. The audit event below still fires with
+      // rules_returned: [] so the no-match retrieval stays observable.
+      const matchedAnything =
+        rules.length + skills.length + memories.length > 0
+      result = matchedAnything
+        ? { ...base, match: 'matched' as const }
+        : {
+            ...base,
+            match: 'none' as const,
+            reason: 'no_match' as const,
+            query_echo: {
+              intent: context.intent ?? '',
+              file_paths: context.file_paths ?? [],
+              symbols: context.symbols ?? [],
+            },
+          }
 
       const envelope: CachedRetrieval<RetrieveContextOutput> = {
         payload: result,
