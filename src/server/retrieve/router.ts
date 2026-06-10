@@ -94,7 +94,11 @@ function parseYaml(src: string): YamlNode {
     .split("\n")
     .map((l) => l.replace(/\r$/, ""))
     .filter((l) => l.trim() !== "" && !l.trim().startsWith("#"));
-  const [tree, _] = parseBlock(lines, 0, 0);
+  // Parse with parentIndent = -1 so top-level keys (at indent 0) are
+  // recognized as map keys. With parentIndent = 0 the firstIndent detector
+  // grabbed the grandchild indent (2) and the indent-0 keys were dropped,
+  // silently yielding an empty config and falling back to default domains.
+  const [tree, _] = parseBlock(lines, 0, -1);
   return tree as YamlNode;
 }
 

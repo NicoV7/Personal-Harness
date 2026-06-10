@@ -37,6 +37,14 @@ routers:
       - if_match: "**/webhooks/**"
         domains: [idempotency, security, observability]
 
+      # Frontend surface: HTML/CSS/JSX/TSX files pull frontend craft rules
+      # (semantic markup, no inline styles, responsive viewport) plus
+      # accessibility (alt text, landmarks).
+      - if_match: "**/*.html"
+        domains: [frontend, accessibility]
+      - if_match: "**/*.css"
+        domains: [frontend, accessibility]
+
   # -----------------------------------------------------------------------
   # 2. Intent-keyword router
   #    Looks at the agent's stated intent (plan/design/implement/debug/...)
@@ -49,6 +57,12 @@ routers:
       # matter most before any code is written.
       - if_intent_contains: ["plan", "design", "scaffold"]
         domains: [methodology, structure, maintainability]
+
+      # Frontend / web work: pull frontend craft + accessibility domains so
+      # website/portfolio/UI tasks get semantic-html, no-inline-styles,
+      # responsive-viewport, and alt-text rules.
+      - if_intent_contains: ["website", "portfolio", "frontend", "ui", "html", "css", "landing page"]
+        domains: [frontend, accessibility]
 
       # Implementation / refactor / edit: maintainability and
       # error-handling at the code level, methodology to keep the diff
