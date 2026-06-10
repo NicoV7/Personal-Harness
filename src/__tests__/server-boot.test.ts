@@ -18,6 +18,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,6 +41,41 @@ try {
 }
 
 const TOKEN = "test-token-1234567890";
+
+/**
+ * POST /mcp with an arbitrary (spoofable) Host header. fetch() refuses
+ * to override Host, so the DNS-rebinding regression below needs raw
+ * node:http. Resolves with the response status code.
+ */
+function postMcpWithHost(
+  port: number,
+  hostHeader: string,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1", // allow-literal-host: test connects to loopback fixture
+        port,
+        path: "/mcp",
+        method: "POST",
+        headers: {
+          host: hostHeader,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${TOKEN}`,
+        },
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on("error", reject);
+    req.end(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    );
+  });
+}
 
 describe("betterai-server boot + /health bearer gate", () => {
   let corpusRoot: string;
@@ -145,6 +181,25 @@ describe("betterai-server boot + /health bearer gate", () => {
       headers: { authorization: `Bearer ${TOKEN}`, accept: "text/event-stream" },
     });
     expect(res.status).toBe(400);
+  });
+
+  test("Wave-5 regression (G4): Host 127.0.0.1:27777 is accepted when BETTERAI_MCP_PORT=27777", async () => {
+    if (!server) return;
+    // The host check must pass for the env-derived port; auth then also
+    // passes (valid bearer), so the MCP layer answers — a JSON-RPC 400
+    // for this non-initialize body, NOT a 401. Any 401 here means the
+    // allowlist is still pinned to a hardcoded port.
+    const status = await postMcpWithHost(server.port, `127.0.0.1:${PORT}`);
+    expect(status).not.toBe(401);
+    expect(status).toBe(400);
+  });
+
+  test("Wave-5 regression (G4): Host 127.0.0.1:7777 is rejected when BETTERAI_MCP_PORT=27777", async () => {
+    if (!server) return;
+    // allow-literal-host: 7777 is the OLD hardcoded default — the exact
+    // regression fixture; it must no longer be on the allowlist.
+    const status = await postMcpWithHost(server.port, "127.0.0.1:7777");
+    expect(status).toBe(401);
   });
 
   test("the obsolete /mcp/sse keep-alive route is gone", async () => {

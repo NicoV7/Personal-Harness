@@ -8,19 +8,90 @@
 //   - The health-check endpoint is the ONLY allowlisted path.
 //   - Every health bypass MUST emit an audit-log entry (ip + UA).
 //
-// The token is read once at construction from BETTERAI_TOKEN_PATH (mode
-// 0600); we trim whitespace because the install script writes a
-// trailing newline.
+// Host allowlist (G4): there are NO host literals in this file. The
+// allowlist is either injected by the caller (main.ts derives it via
+// contracts/env.ts `allowedHostsFromEnv`) or derived here from the same
+// helper's process-env wrapper — ONE source of truth, in the env layer,
+// per config-from-env-not-hardcoded.
+//
+// TOKEN ROTATION SEMANTICS (G4 decision — option (b), restart required):
+//   The token is read ONCE at construction and cached for the process
+//   lifetime. Rotating the token file on disk has NO effect on a running
+//   server; restart the server to pick up the new value. We chose
+//   restart-required over mtime polling because (1) the install script
+//   writes the token exactly once before startup, (2) re-reading on the
+//   hot auth path adds a disk stat per request, and (3) a half-written
+//   token file mid-rotation would intermittently 401 valid clients. In
+//   exchange we fail LOUD at startup: missing or empty/whitespace-only
+//   token files throw typed errors before the listener ever binds.
+//
+//   Trim semantics: the token value is trim()ed at read time because the
+//   install script writes a trailing newline — a file containing
+//   "token\n" matches the header value "token".
 
 import { existsSync, readFileSync } from "node:fs";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
+import {
+  DEFAULT_TOKEN_PATH,
+  allowedHostsFromProcessEnv,
+} from "../../contracts/env.js";
+
+// ---- Typed errors -------------------------------------------------------
+//
+// Per STANDARDS/error-handling/typed-errors-from-errors-layer: stable
+// codes from the BAI-1xx bootstrap block. These live in the auth layer
+// until the central src/errors/ layer lands (migration step 1 of that
+// rule); they are exported so callers and tests can match on the type
+// and code rather than on message text.
+
+/** Base class for bearer bootstrap failures. */
+export class BearerTokenError extends Error {
+  constructor(
+    /** Stable error code (BAI-1xx bootstrap block). */
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+
+/** BAI-101: the token file does not exist at the configured path. */
+export class BearerTokenMissingError extends BearerTokenError {
+  static readonly code = "BAI-101";
+  constructor(path: string) {
+    super(
+      BearerTokenMissingError.code,
+      `bearer token not found at ${path}; install script must write it before startup`,
+    );
+  }
+}
+
+/** BAI-102: the token file exists but is empty or whitespace-only. */
+export class BearerTokenEmptyError extends BearerTokenError {
+  static readonly code = "BAI-102";
+  constructor(path: string) {
+    super(
+      BearerTokenEmptyError.code,
+      `bearer token at ${path} is empty or whitespace-only; refusing to start with a token that matches nothing`,
+    );
+  }
+}
+
+// ---- Options -------------------------------------------------------------
 
 export interface BearerOptions {
-  /** Path to the token file. Default: /data/token. */
+  /** Path to the token file. Default: BETTERAI_TOKEN_PATH's default. */
   tokenPath?: string;
   /** Routes that may skip the bearer check. */
   unauthenticatedPaths?: Set<string>;
-  /** Hosts the server will accept; rejects everything else (DNS rebinding). */
+  /**
+   * Hosts the server will accept; rejects everything else (DNS
+   * rebinding). When omitted, derived from the environment via
+   * contracts/env.ts `allowedHostsFromProcessEnv` (BETTERAI_ALLOWED_HOSTS
+   * override, else BETTERAI_BIND_HOST:BETTERAI_MCP_PORT + localhost alias).
+   */
   allowedHosts?: Set<string>;
   /**
    * Audit-bypass emitter.  Called from the health-path branch.  Real
@@ -30,25 +101,21 @@ export interface BearerOptions {
 }
 
 const DEFAULT_UNAUTHENTICATED_PATHS = new Set(["/health"]);
-const DEFAULT_ALLOWED_HOSTS = new Set([
-  "127.0.0.1:7777",
-  "localhost:7777",
-]);
 
 /**
- * Read and cache the bearer token.  Throws at construction time if the
- * file is missing — we'd rather fail loud at startup than 401 every
- * request silently.
+ * Read and cache the bearer token.  Throws a typed error at construction
+ * time if the file is missing or blank — we'd rather fail loud at
+ * startup than 401 every request silently.  See the rotation-semantics
+ * comment at the top of this file: this is the ONLY read; rotation
+ * requires a restart.
  */
 function readToken(path: string): string {
   if (!existsSync(path)) {
-    throw new Error(
-      `bearer token not found at ${path}; install script must write it before startup`,
-    );
+    throw new BearerTokenMissingError(path);
   }
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) {
-    throw new Error(`bearer token at ${path} is empty`);
+    throw new BearerTokenEmptyError(path);
   }
   return raw;
 }
@@ -61,11 +128,11 @@ function readToken(path: string): string {
  * Returns 401 with `{ error: "unauthorized" }` on any failure.
  */
 export function bearerMiddleware(opts: BearerOptions = {}): MiddlewareHandler {
-  const tokenPath = opts.tokenPath ?? "/data/token";
+  const tokenPath = opts.tokenPath ?? DEFAULT_TOKEN_PATH;
   const token = readToken(tokenPath);
-  const allowedHosts = opts.allowedHosts ?? DEFAULT_ALLOWED_HOSTS;
+  const allowedHosts = opts.allowedHosts ?? allowedHostsFromProcessEnv();
   const unauth = opts.unauthenticatedPaths ?? DEFAULT_UNAUTHENTICATED_PATHS;
-  const onBypass = opts.onBypass;
+  const { onBypass } = opts;
 
   return async (c, next) => {
     const path = new URL(c.req.url).pathname;
@@ -98,14 +165,13 @@ export function bearerMiddleware(opts: BearerOptions = {}): MiddlewareHandler {
 }
 
 /**
- * Constant-time string compare.  Avoids leaking the token byte-by-byte
- * through early-return timing — paranoid but cheap.
+ * Constant-time string compare built on node:crypto `timingSafeEqual`.
+ * Both inputs are SHA-256 hashed to equal-length buffers first, so
+ * neither the content nor the LENGTH of the secret leaks through
+ * early-return timing.  Exported for structural/behavioral tests.
  */
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+export function constantTimeEqual(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
 }

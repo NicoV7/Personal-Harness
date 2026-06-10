@@ -33,6 +33,7 @@ import type {
 import { z, type ZodRawShape } from "zod";
 
 import { bearerMiddleware } from "./auth/bearer.js";
+import { allowedHostsFromEnv } from "../contracts/env.js";
 import { ConnectionLimiter } from "./cache/connection-limiter.js";
 import { ContextCache } from "./cache/context-hash.js";
 import {
@@ -105,6 +106,13 @@ const EnvSchema = z.object({
     .default("info"),
   /** When set, bind to this host instead of 127.0.0.1 (tests only). */
   BETTERAI_BIND_HOST: z.string().default("127.0.0.1"),
+  /**
+   * Comma-separated `host:port` allowlist override for the bearer
+   * middleware's DNS-rebinding check. Unset → derived from
+   * BETTERAI_BIND_HOST + BETTERAI_MCP_PORT (contracts/env.ts
+   * `allowedHostsFromEnv`).
+   */
+  BETTERAI_ALLOWED_HOSTS: z.string().optional(),
 });
 
 export type ResolvedEnv = z.infer<typeof EnvSchema>;
@@ -206,12 +214,11 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
   const app = new Hono();
 
   // Hosts we accept, derived from the env layer (DNS-rebinding defense).
-  // `localhost` is a loopback alias of the env-configured bind host, not
-  // an independent hardcoded host (per config-from-env-not-hardcoded).
-  const allowedHosts = new Set([
-    `${env.BETTERAI_BIND_HOST}:${env.BETTERAI_MCP_PORT}`,
-    `localhost:${env.BETTERAI_MCP_PORT}`,
-  ]);
+  // Single source of truth: contracts/env.ts `allowedHostsFromEnv` —
+  // BETTERAI_ALLOWED_HOSTS overrides; otherwise BIND_HOST:MCP_PORT plus
+  // the localhost:<port> alias when binding loopback (per
+  // config-from-env-not-hardcoded, no host literals here).
+  const allowedHosts = allowedHostsFromEnv(env);
 
   // Bearer middleware before any tool dispatch — single chokepoint per
   // .betterai/rules/STANDARDS/security/mcp-tools-require-bearer.

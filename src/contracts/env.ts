@@ -82,10 +82,29 @@ export type ResolvedEnv = z.infer<typeof EnvSchema>;
 // ---- Helpers -----------------------------------------------------------------
 
 /**
- * Resolve the Host-header allowlist for the bearer middleware.
- * BETTERAI_ALLOWED_HOSTS (comma-separated, whitespace-tolerant) wins;
- * otherwise the allowlist is derived from the bind host + port, plus the
- * conventional localhost spelling.
+ * Bind hosts that serve the loopback interface. When BetterAI binds one
+ * of these, clients legitimately reach it as `localhost:<port>`, so the
+ * Host allowlist gains that alias. (0.0.0.0/:: bind all interfaces,
+ * which includes loopback.) These literals live here because env.ts IS
+ * the env layer — per config-from-env-not-hardcoded, named constants in
+ * this file are the one sanctioned home for host literals.
+ */
+export const LOOPBACK_BIND_HOSTS: ReadonlySet<string> = new Set([
+  "127.0.0.1",
+  "::1",
+  "localhost",
+  "0.0.0.0",
+  "::",
+]);
+
+/**
+ * Resolve the Host-header allowlist for the bearer middleware — the ONE
+ * source of truth for DNS-rebinding host derivation (G4).
+ *
+ * BETTERAI_ALLOWED_HOSTS (comma-separated, whitespace-tolerant) wins as
+ * an explicit override; otherwise the allowlist is derived from
+ * BETTERAI_BIND_HOST:BETTERAI_MCP_PORT, plus the `localhost:<port>`
+ * alias when the bind host serves loopback.
  */
 export function allowedHostsFromEnv(
   env: Pick<
@@ -100,10 +119,31 @@ export function allowedHostsFromEnv(
         .filter((h) => h.length > 0),
     );
   }
-  return new Set([
+  const derived = new Set([
     `${env.BETTERAI_BIND_HOST}:${env.BETTERAI_MCP_PORT}`,
-    `localhost:${env.BETTERAI_MCP_PORT}`,
   ]);
+  if (LOOPBACK_BIND_HOSTS.has(env.BETTERAI_BIND_HOST)) {
+    derived.add(`localhost:${env.BETTERAI_MCP_PORT}`);
+  }
+  return derived;
+}
+
+/**
+ * Convenience wrapper for modules that have no parsed env in hand (e.g.
+ * the bearer middleware's no-options default path): parse ONLY the three
+ * relevant vars out of a raw process env (defaults applied) and derive
+ * the allowlist. Keeps process.env reads inside the env layer.
+ */
+export function allowedHostsFromProcessEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Set<string> {
+  return allowedHostsFromEnv(
+    EnvSchema.pick({
+      BETTERAI_ALLOWED_HOSTS: true,
+      BETTERAI_BIND_HOST: true,
+      BETTERAI_MCP_PORT: true,
+    }).parse(env),
+  );
 }
 
 // ---- Drift guards (typecheck-time; zero runtime cost) -------------------------
