@@ -3,10 +3,12 @@
 // Phase 1.0 retrieval is grep-only: match a rule/skill/memory against an
 // agent's context via simple substring/glob hits on applies_when fields.
 //
-// TODO(phase-1.5): replace this with an embedding-aware index (MiniLM
-// via @xenova/transformers) per the v4 design.  The interface below is
-// designed so the embedding path can drop in without changing callers —
-// `score()` is the only thing that needs to change.
+// Phase 1.5 (Wave 6): the pure scoring functions below stay exported —
+// other call sites and tests use them directly — and `GrepScorer` wraps
+// them behind the shared async-batch `RetrievalScorer` seam
+// (src/contracts/retrieval.ts) so the orchestrator can swap in the
+// MiniLM embedding / hybrid scorers (src/server/retrieve/embeddings.ts)
+// without changing.
 
 import type {
   Memory,
@@ -14,6 +16,10 @@ import type {
   Scope,
   Skill,
 } from "../corpus/reader.js";
+import type {
+  RetrievalMode,
+  RetrievalScorer,
+} from "../../contracts/retrieval.js";
 
 export interface MatchContext {
   file_paths: string[];
@@ -134,6 +140,37 @@ export function scoreMemory(
   // resolution doc says they outrank rules; let retrieval surface them.
   if (memory.kind === "decision" && memory.durability === "long") raw += 1;
   return { item: memory, score: raw, reason: reasons.join(",") || "no-match" };
+}
+
+// ---- RetrievalScorer adapter (Wave 6) -----------------------------------
+
+/**
+ * Adapter exposing the synchronous grep scoring functions through the
+ * shared async-batch `RetrievalScorer` seam.  Pure delegation — scores,
+ * ordering, and reason strings are byte-identical to calling
+ * scoreRule/scoreSkill/scoreMemory directly, which keeps the
+ * determinism/cache-key contract trivially satisfied.
+ */
+export class GrepScorer implements RetrievalScorer {
+  readonly mode: RetrievalMode = "grep";
+
+  scoreRules(rules: Rule[], ctx: MatchContext): Promise<ScoredArtifact<Rule>[]> {
+    return Promise.resolve(rules.map((r) => scoreRule(r, ctx)));
+  }
+
+  scoreSkills(
+    skills: Skill[],
+    ctx: MatchContext,
+  ): Promise<ScoredArtifact<Skill>[]> {
+    return Promise.resolve(skills.map((s) => scoreSkill(s, ctx)));
+  }
+
+  scoreMemories(
+    memories: Memory[],
+    ctx: MatchContext,
+  ): Promise<ScoredArtifact<Memory>[]> {
+    return Promise.resolve(memories.map((m) => scoreMemory(m, ctx)));
+  }
 }
 
 // ---- Helpers -----------------------------------------------------------

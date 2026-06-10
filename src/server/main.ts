@@ -33,7 +33,13 @@ import type {
 import { z, type ZodRawShape } from "zod";
 
 import { bearerMiddleware } from "./auth/bearer.js";
-import { allowedHostsFromEnv } from "../contracts/env.js";
+import {
+  allowedHostsFromEnv,
+  DEFAULT_MODEL_CACHE_DIR,
+  DEFAULT_RETRIEVAL_MODE,
+} from "../contracts/env.js";
+import { RETRIEVAL_MODES } from "../contracts/retrieval.js";
+import { createScorer } from "./retrieve/embeddings.js";
 import { ConnectionLimiter } from "./cache/connection-limiter.js";
 import { ContextCache } from "./cache/context-hash.js";
 import {
@@ -113,6 +119,12 @@ const EnvSchema = z.object({
    * `allowedHostsFromEnv`).
    */
   BETTERAI_ALLOWED_HOSTS: z.string().optional(),
+  /** Which RetrievalScorer implementation the orchestrator uses. */
+  BETTERAI_RETRIEVAL_MODE: z
+    .enum(RETRIEVAL_MODES)
+    .default(DEFAULT_RETRIEVAL_MODE),
+  /** Directory holding the baked MiniLM model files (Phase 1.5). */
+  BETTERAI_MODEL_CACHE_DIR: z.string().default(DEFAULT_MODEL_CACHE_DIR),
 });
 
 export type ResolvedEnv = z.infer<typeof EnvSchema>;
@@ -182,12 +194,29 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
   const router = DomainRouter.fromFile(
     `${env.BETTERAI_CORPUS_ROOT}/rules/_meta/domain-router.yaml`,
   );
+  // Retrieval scorer selection — the ONLY place BETTERAI_RETRIEVAL_MODE
+  // is branched on. Hybrid (the default) lazily loads MiniLM on first
+  // score and degrades to grep-only with a one-time structured warning
+  // if the model is unavailable (offline / empty cache dir).
+  const debugEnabled =
+    env.BETTERAI_LOG_LEVEL === "debug" || env.BETTERAI_LOG_LEVEL === "trace";
+  const scorer = createScorer({
+    mode: env.BETTERAI_RETRIEVAL_MODE,
+    modelCacheDir: env.BETTERAI_MODEL_CACHE_DIR,
+    debugLog: debugEnabled
+      ? (msg, fields) => console.debug(`[betterai] ${msg}`, JSON.stringify(fields))
+      : undefined,
+    warnLog: (msg, fields) =>
+      console.warn(`[betterai] ${msg}`, JSON.stringify(fields)),
+  });
+
   const orchestrator = new RetrievalOrchestrator({
     globalCorpusRoot: env.BETTERAI_CORPUS_ROOT,
     router,
     cache,
     repoDetector,
     auditLog,
+    scorer,
   });
 
   // ---- 3. Assemble the DI context ---------------------------------------

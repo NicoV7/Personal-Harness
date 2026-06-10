@@ -33,11 +33,10 @@ import { DomainRouter } from "./router.js";
 import {
   capByDomain,
   capTopK,
-  scoreMemory,
-  scoreRule,
-  scoreSkill,
+  GrepScorer,
   type MatchContext,
 } from "./grep.js";
+import type { RetrievalScorer } from "../../contracts/retrieval.js";
 import type { RepoDetector } from "../scope/repo-detector.js";
 
 export type ScopeFilter = "merged" | "global" | "repo";
@@ -81,6 +80,12 @@ export interface RetrievalDeps {
   cache: ContextCache;
   repoDetector: RepoDetector;
   auditLog: AuditLogFn;
+  /**
+   * Matching strategy behind the async-batch RetrievalScorer seam
+   * (src/contracts/retrieval.ts).  src/server/main.ts selects one from
+   * BETTERAI_RETRIEVAL_MODE; omitted → grep (Phase 1.0 behavior).
+   */
+  scorer?: RetrievalScorer;
 }
 
 /**
@@ -90,7 +95,11 @@ export interface RetrievalDeps {
  * logic.
  */
 export class RetrievalOrchestrator {
-  constructor(private readonly deps: RetrievalDeps) {}
+  private readonly scorer: RetrievalScorer;
+
+  constructor(private readonly deps: RetrievalDeps) {
+    this.scorer = deps.scorer ?? new GrepScorer();
+  }
 
   async retrieveContext(
     input: RetrieveInput,
@@ -158,7 +167,10 @@ export class RetrievalOrchestrator {
       intent: ctx.intent,
     });
 
-    const ruleScored = rulesPool.map((r) => scoreRule(r, ctx));
+    // Async batch scoring through the RetrievalScorer seam — grep,
+    // embedding, or hybrid per BETTERAI_RETRIEVAL_MODE; the orchestrator
+    // never branches on the mode.
+    const ruleScored = await this.scorer.scoreRules(rulesPool, ctx);
     const cappedRules = capByDomain(
       ruleScored,
       route.domains,
@@ -168,11 +180,11 @@ export class RetrievalOrchestrator {
     const topKKind =
       input.top_k_per_kind ?? Math.max(4, Math.floor(route.max_total_rules / 3));
     const cappedSkills = capTopK(
-      skillsPool.map((s) => scoreSkill(s, ctx)),
+      await this.scorer.scoreSkills(skillsPool, ctx),
       topKKind,
     );
     const cappedMemories = capTopK(
-      memoriesPool.map((m) => scoreMemory(m, ctx)),
+      await this.scorer.scoreMemories(memoriesPool, ctx),
       topKKind,
     );
 
