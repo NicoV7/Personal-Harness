@@ -117,7 +117,10 @@ function parseBlock(
   // Detect whether this block is a list (starts with "-") or a map.
   for (let j = i; j < lines.length; j += 1) {
     const ind = indentOf(lines[j]);
-    if (ind <= parentIndent && j !== i) return [emptyOrFirst()] as never;
+    // Dedent before any child appeared: this block is an empty node. Return a
+    // well-formed [node, index] tuple (NOT the malformed length-1 array the
+    // `as never` cast used to hide — that stored the raw [{},0] tuple as a value).
+    if (ind <= parentIndent && j !== i) return [{}, j];
     if (ind > parentIndent) {
       firstIndent = ind;
       break;
@@ -196,10 +199,6 @@ function parseBlock(
     i += 1;
   }
   return [obj, i];
-}
-
-function emptyOrFirst(): [unknown, number] {
-  return [{}, 0];
 }
 
 function parseScalar(raw: string): unknown {

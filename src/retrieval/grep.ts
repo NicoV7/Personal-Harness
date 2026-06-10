@@ -124,7 +124,7 @@ export function scoreMemory(
   if (memory.context_keywords?.length) {
     const hit = memory.context_keywords.some((k) => intent.includes(k));
     if (hit) {
-      raw += 2;
+      raw += SCORE_INTENT_MATCH;
       reasons.push("keyword-hit");
     }
   }
@@ -133,13 +133,14 @@ export function scoreMemory(
       intent.includes(kw.toLowerCase()),
     );
     if (hit) {
-      raw += 2;
+      raw += SCORE_INTENT_MATCH;
       reasons.push("future-intent-hit");
     }
   }
   // Long-durability decisions get a bonus — the corpus's conflict-
   // resolution doc says they outrank rules; let retrieval surface them.
-  if (memory.kind === "decision" && memory.durability === "long") raw += 1;
+  if (memory.kind === "decision" && memory.durability === "long")
+    raw += SCORE_BODY_HIT;
   return { item: memory, score: raw, reason: reasons.join(",") || "no-match" };
 }
 

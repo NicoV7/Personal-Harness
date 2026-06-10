@@ -81,7 +81,11 @@ export class NoGateInProgressError extends BetterAIError {
  * results, not HTTP responses; the status documents intent.
  */
 export class ValidationError extends BetterAIError {
-  static readonly code = "BAI-301";
+  /** Legacy wire code preserved for clients that branch on it. */
+  static readonly code = "VALIDATION_ERROR";
+  /** Stable BAI identifier (canonical `code` keeps the legacy string). */
+  static readonly baiCode = "BAI-301";
+  readonly baiCode = ValidationError.baiCode;
   constructor(message: string) {
     super(ValidationError.code, message, { httpStatus: 400 });
   }
@@ -91,7 +95,11 @@ export class ValidationError extends BetterAIError {
 
 /** BAI-401: an explain_rule lookup found no matching rule in scope. */
 export class RuleNotFoundError extends BetterAIError {
-  static readonly code = "BAI-401";
+  /** Legacy wire code preserved for clients that branch on it. */
+  static readonly code = "RULE_NOT_FOUND";
+  /** Stable BAI identifier (canonical `code` keeps the legacy string). */
+  static readonly baiCode = "BAI-401";
+  readonly baiCode = RuleNotFoundError.baiCode;
   constructor(message: string) {
     super(RuleNotFoundError.code, message, { httpStatus: 404 });
   }

@@ -23,15 +23,15 @@ const MAX_ROWS = 10
 // Path-prefix → component name. Longest prefix wins.
 // Keep in sync with docs/components/index.html.
 const PATH_TO_COMPONENT = [
-  ['src/server/corpus/', 'corpus'],
-  ['src/server/retrieve/', 'retrieve'],
-  ['src/server/cache/', 'cache'],
-  ['src/server/audit/', 'audit'],
-  ['src/server/scope/', 'scope'],
-  ['src/server/transport/', 'transport'],
-  ['src/server/auth/', 'auth'],
-  ['src/server/main.ts', 'transport'],
-  ['src/server/', 'transport'],
+  // Capability-flat layout (the src/server/ prefix was removed; retrieve→retrieval).
+  ['src/corpus/', 'corpus'],
+  ['src/retrieval/', 'retrieve'],
+  ['src/cache/', 'cache'],
+  ['src/audit/', 'audit'],
+  ['src/scope/', 'scope'],
+  ['src/transport/', 'transport'],
+  ['src/auth/', 'auth'],
+  ['src/app.ts', 'transport'],
   ['src/mcp-tools/', 'mcp-tools'],
   ['src/cli/', 'cli'],
   ['bin/betterai', 'cli'],
