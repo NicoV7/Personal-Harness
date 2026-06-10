@@ -47,7 +47,10 @@ VERBS
   status [--offline]         Show corpus counts and recent activity
   why <task> [--context P]   Explain routing decision for a task description
   replay --since 7d          Weekly audit-log digest
-  gate --week N              Self-verifying Phase 1.0 dogfooding gate
+  gate --start               Begin the 5-day Phase 1.0 dogfooding gate (writes gate.json)
+  gate --status              Day N/5 progress vs gate targets (exit 2 if no gate started)
+  gate --abort               Archive the in-progress gate (gate.aborted.<ts>.json)
+  gate --week N              Self-verifying weekly dogfooding-gate evaluation
   new {rule|skill|memory}    Scaffold a new artifact (--scope repo|global)
 
   -h, --help                 Show this help
