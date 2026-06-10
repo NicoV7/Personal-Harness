@@ -1,6 +1,8 @@
-# BetterAI — Handoff (2026-06-09, end of orchestration session)
+# BetterAI — Handoff (2026-06-09 evening, post-Wave-5)
 
-> Supersedes `HANDOFF-20260609-151359.md`. If you put this down for a week and came back, this doc is the single page that gets you executing again.
+> Supersedes the morning Wave-4 handoff. If you put this down for a week and came back, this doc is the single page that gets you executing again.
+>
+> **Companion doc**: [`docs/RELIABILITY-TEST-GAPS.md`](RELIABILITY-TEST-GAPS.md) — test gap analysis ranked by reliability ROI; agents are hard to monitor with human-in-the-loop, so the audit log is the only observability surface and the gaps in it are the gaps in BetterAI's reliability story.
 
 ---
 
@@ -158,40 +160,34 @@ Plus the orchestrator (you / Claude main loop) personally authored:
 
 ---
 
-## The immediate next 3 actions (in order)
+## The immediate next 3 actions (in order, post-Wave-5)
 
-### 1. Run Wave 5 &mdash; contract reconciliation
+### 1. Wire the MCP SDK's streamable HTTP transport into `/mcp`
 
-Spawn 2 specialists in parallel worktrees:
+`src/server/transport/http-sse.ts` `/mcp` currently returns `{error: "mcp_dispatch_unimplemented"}`. Until this lands:
+- No real MCP client can call any tool — only in-process unit tests exercise the contract.
+- Phase 4/5 of the original Wave 5 plan (multi-agent orchestration verification over HTTP) is blocked.
+- Item 2.5's `report_rule_application` Stop hook can't flow because the Stop hook calls the MCP tool over HTTP.
 
-**Specialist X (Team B side):**
-- Add `src/server/scope/detect.ts` with `export function detectRepoRoot(paths: string[]): string | null` as a thin wrapper around `class RepoDetector`. Keep the class; add the function.
-- Extend `CorpusReader` with `fetchRules() / fetchSkills() / fetchMemories()` view methods OR change the tools to use `read()`-returned `CorpusSnapshot`. Pick one and align.
-- Add `keyFor(input)` method to `ContextCache` OR have tools call `contextHash()` directly.
-- Add `cache_hit: boolean` to `AuditEvent` shape if the tools genuinely need it (else delete from tool calls).
-- Add `session?: string` and `tool_call_id?: string` to `ToolContext` (sourced from the 3rd `meta` arg the MCP SDK passes).
-- Move `JsonlAuditWriter` mkdir to first-append (lazy) OR accept an `audit_path` override.
+What changed since Wave 3 wrote the placeholder: the MCP SDK's HTTP transport API was "stabilizing." Re-check the SDK now, choose between `StreamableHttpServerTransport` and the SSE alternative, and replace the placeholder. Expected ~1 day. Once green: re-run the harness verification from the Wave 5 plan (Phase 4 + 5).
 
-**Specialist Y (Team C side):**
-- Rewrite all 7 `src/mcp-tools/*.ts` to use the reconciled API.
-- Wire `src/index.ts` to `import` all 7 tools and pass `{ tools: [...] }` to `startServer()`.
-- Decide tsconfig posture: recommend RELAX `noPropertyAccessFromIndexSignature` + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` for Phase 1.0 (165+ errors disappear with no behavioral risk). Document the relaxation in a CLAUDE.md or `docs/AUTHORING.md` note for future-Nico to revisit at Phase 1.5.
-- Fix the LRU eviction case in `cache/context-hash.ts` (the `cache.test.ts` failure).
+### 2. Close Tier 1 reliability test gaps
 
-**Gate:** `npm run typecheck` returns 0 errors; `npm test` passes &ge;90% (60/66). The handoff doc updated to reflect green.
+Per [`docs/RELIABILITY-TEST-GAPS.md`](RELIABILITY-TEST-GAPS.md), 5 critical reliability primitives ship with zero or partial test coverage:
 
-### 2. Run install.sh end-to-end manually
+- **G1 ConnectionLimiter** — multi-agent fan-out's only protection. 0 tests. ~1d.
+- **G2 MissedRetrievalDetector** — the v1.0 compliance-detection mechanism. 0 tests. ~0.5d.
+- **G3 JsonlAuditWriter IO failures** — the single observability surface. ~1d.
+- **G4 bearerMiddleware adversarial inputs** — happy path only today. ~1d. Will surface real bugs.
+- **G5-M1 search-returns-nothing** — most likely M1-M5 mode to fire in dogfooding. ~0.5d.
 
-Once compile-green:
-- `npm run build && docker build -t betterai/server:dev . && docker compose up -d`
-- Verify `/health` returns 200.
-- Verify Claude Code MCP discovery sees `betterai` tools.
-- Hit `retrieve_context` from Claude Code on a real prompt.
-- Tail `~/.betterai/audit/audit.jsonl` to confirm the event shape (parent_session_id, scopes_queried, scope per item).
+Total: ~4 days. Do these before dogfooding (action 3) so gate-day failures don't silently disappear.
 
-### 3. Start the Phase 1.0 dogfooding gate
+### 3. Start Item 4 — the 5-day Phase 1.0 dogfooding gate
 
-5 consecutive engineering days using Claude Code + BetterAI on actual work. Target: &ge;5 rules fire across the week AND &ge;3 visible behavior changes (qualitative). Use `betterai gate --week 1` to self-verify against the audit log.
+5 consecutive engineering days using Claude Code + BetterAI on actual work. Per the v1.5 plan §"Item 4," with the `betterai gate --start/--status/--abort` verbs (which still need to be implemented — they're in the v1.5 plan, not Wave 5). Target: &ge;5 rule fires AND &ge;3 visible behavior changes. Use `betterai gate --week 1` to self-verify against the audit log.
+
+**Pre-requisite for action 3 from the v1.5 plan that is NOT YET BUILT**: `betterai gate --start/--status/--abort` CLI verbs. The existing `betterai gate --week N` exists; the start/status verbs need to be added (Item 4 deliverable per v1.5 plan).
 
 ---
 
@@ -200,7 +196,9 @@ Once compile-green:
 | Gate | Status | Test |
 |---|---|---|
 | **Day 1 corpus signal** (23 files materialize, schema-valid, retrievable) | <span style="color:#3fb950">PASSED</span> | Wave 1 + Wave 2 |
-| **Phase 1.0 compile gate** (0 typecheck errors, &ge;90% tests pass) | <span style="color:#f85149">FAILING</span> | Wave 5 = pre-req |
+| **Phase 1.0 compile gate** (0 typecheck errors, &ge;90% tests pass) | <span style="color:#3fb950">PASSED</span> | Wave 5 (0 errors, 66/66 = 100%) |
+| **`/mcp` HTTP dispatch responds to a real MCP client** | <span style="color:#f85149">FAILING</span> | Placeholder; wire SDK transport |
+| **Tier 1 reliability tests** (G1-G5 from RELIABILITY-TEST-GAPS.md) | <span style="color:#f85149">FAILING</span> | 4 days of focused work |
 | **TTHW &lt; 5 min** on fresh machine (DX gate) | not measured | Run install.sh end-to-end |
 | **Phase 1.0 dogfooding** (5 days &times; &ge;5 fires &times; &ge;3 behavior changes) | not started | After compile gate |
 | **Multi-agent retrieval rate** (3/3 subagents call retrieve_context in parallel-bug-hunt fixture) | not measured | Phase 3 eval (optional) |
@@ -281,8 +279,50 @@ Once compile-green:
 
 ## Status
 
-**DONE:** four design iterations &times; three adversarial reviews + one approved design + v4.1 scoping extension; 23 seed corpus files + 5 BetterAI repo rules + 3 _meta docs; 51-file Phase 1.0 scaffold; 10 component HTML docs; auto-stamp harness; 9 commits on main; testing report with green path to Phase 1.0 compile.
+**DONE:** four design iterations × three adversarial reviews + one approved design + v4.1 scoping extension; 23 seed corpus files + 5 BetterAI repo rules + 3 _meta docs; 51-file Phase 1.0 scaffold; 10 component HTML docs; auto-stamp harness; **Wave 5 contract reconciliation (typecheck 0 + 66/66 tests)**; v1.5 plan approved with Codex's 6-item cut; 3 new corpus rules from session code-review; eval harness design (`docs/EVAL-HARNESS.md`); reliability test gap analysis (`docs/RELIABILITY-TEST-GAPS.md`); 17 commits on main.
 
-**NOT YET DONE:** typecheck-green; test-green; install.sh end-to-end run; Phase 1.0 dogfooding gate; embeddings; ast-grep; VSCode extension; eval lift harness.
+**NOT YET DONE:** `/mcp` HTTP transport wired (placeholder); install.sh end-to-end run; `betterai gate --start/--status/--abort` verbs; Phase 1.0 dogfooding gate; Tier 1 reliability tests (G1-G5); Items 1b/2/2.5/3/4/5/6 of the v1.5 plan; embeddings; ast-grep; VSCode extension; eval lift harness implementation.
 
-**The single next action:** Wave 5 &mdash; contract reconciliation. Two specialists in parallel worktrees. Recommended duration: ~3-5 hours of agent work; estimated post-merge gate: 0 typecheck errors + &ge;90% test pass.
+**The single next action:** Wire the MCP SDK's streamable HTTP transport into `src/server/transport/http-sse.ts` `/mcp`. Without this, no real MCP client can call any tool, and Item 2.5's `report_rule_application` Stop hook has nothing to call. Expected ~1 day. Then run Phase 4/5 harness verification from the Wave 5 plan, then Tier 1 reliability tests, then Item 4 dogfooding.
+
+---
+
+## End-of-session handoff notes (2026-06-09 evening)
+
+This session touched four threads in order:
+
+1. **Strategy (office-hours + autoplan)**: Pivoted v1.5 plan from "Two-Track Parallel, 9 items, 7-9 weeks" to "Codex's 6-item dogfooding-proof cut, 5-6 weeks linear" after both /autoplan voices flagged 6/6 CEO dimensions. The design doc is at [`~/.gstack/projects/betterai/nicov-main-design-20260609-170602.md`](../../.gstack/projects/betterai/nicov-main-design-20260609-170602.md) (path is outside the repo; vendored only as needed). Eval harness sub-design: [`docs/EVAL-HARNESS.md`](EVAL-HARNESS.md).
+
+2. **Corpus additions**: 3 new rules under `.betterai/rules/STANDARDS/` — `config-from-env-not-hardcoded`, `typed-errors-from-errors-layer`, `no-magic-numbers-import-from-constants`. Authored after a code review of `src/server/auth/bearer.ts` + `src/server/cache/context-hash.ts` surfaced 8 architectural smells the existing `layered-architecture-default` rule should have caught but didn't (its `applies_when.intents` triggers are too narrow — tracked for v1.5 Item 6 sweep).
+
+3. **Wave 5 execution**: 7 commits landed on main:
+   - `c4d5502` pre-flight chore
+   - `16c765f` + `33fb1f3` Specialist X (server contracts)
+   - `18c9b3d` + `66a8ad2` Specialist Y (tools + entrypoint + tsconfig)
+   - `68362dc` post-merge gate finalization
+   - `b2bf8e3` HANDOFF v1
+   - `e196d4c` corpus + EVAL-HARNESS doc
+
+   Result: typecheck 0, tests 66/66, harness boot verified in-process. `/mcp` HTTP dispatch is a known placeholder.
+
+4. **Reliability gap analysis**: [`docs/RELIABILITY-TEST-GAPS.md`](RELIABILITY-TEST-GAPS.md) — 12 gaps ranked by ROI. Reliability matters here because agents are hard to monitor with a human in the loop; the audit log is the only observability surface and gaps in it gap the whole story.
+
+### Hot-bug list (real bugs found, not yet fixed)
+
+- **Hardcoded `127.0.0.1:7777` allowedHosts in `bearer.ts:32-36`** — surfaced when this session's harness verification tried port 27777 and got `host_not_allowed`. The `config-from-env-not-hardcoded` corpus rule warns about exactly this. One-line env-driven fix. Tracked.
+- **18 rule frontmatter shape issues in the Wave-1 seed corpus** — `applies_when.paths` or `applies_when.intents` are string/null where array is expected. Server logs at corpus-load and proceeds. Tracked for a Wave-1 chore.
+- **`/mcp` HTTP dispatcher is `mcp_dispatch_unimplemented`** — known placeholder from Wave 3, gates Item 2.5 + Phase 4/5 verification.
+- **Reliability primitives without tests** — G1 ConnectionLimiter, G2 MissedRetrievalDetector, G3 JsonlAuditWriter IO failures, G4 bearerMiddleware adversarial, G5 M1-M5 fault tolerance. See `docs/RELIABILITY-TEST-GAPS.md` for the full inventory.
+
+### What I'd do first if I sat down tomorrow
+
+A single track, in order:
+
+1. (~1d) Wire `/mcp` SDK transport. Validate via Claude Code calling `retrieve_context` for real.
+2. (~1d) Fix `bearer.ts` allowedHosts to use env (`BETTERAI_BIND_HOST` + `BETTERAI_MCP_PORT` already exist on the env schema). Add adversarial bearer tests (G4) while you're in there.
+3. (~1d) Add tests for `ConnectionLimiter` (G1) and `MissedRetrievalDetector` (G2). Both small, both high-ROI, both block Item 3 cleanly.
+4. (~0.5d) Fix the 18 Wave-1 frontmatter issues + add G12 robustness tests.
+5. (~2-3d) Implement Item 4's `betterai gate --start/--status/--abort` verbs.
+6. (1 week) Run the dogfooding gate.
+
+That sequence closes the reliability story before the dogfooding gate measures behavior on top of it. Without G1-G5, the dogfooding metric is "what BetterAI did when it didn't silently fail" — measurement on top of a noisy floor.
