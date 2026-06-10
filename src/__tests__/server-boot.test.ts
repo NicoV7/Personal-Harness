@@ -21,9 +21,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Wave 5 reconciled API: startServer({ tools: McpTool[]; env?: Partial<ResolvedEnv> })
-// returns StartedServer { app, mcpServer, shutdown, port }. Env knobs:
+// Wave 6 reconciled API: startServer({ tools: McpTool[]; env?: Partial<ResolvedEnv> })
+// returns StartedServer { app, sessionCount, shutdown, port }. Env knobs:
 // BETTERAI_CORPUS_ROOT, BETTERAI_MCP_PORT, BETTERAI_TOKEN_PATH, BETTERAI_BIND_HOST.
+// The bearer Host allowlist is derived from BETTERAI_BIND_HOST:BETTERAI_MCP_PORT,
+// so this fixture's port 27777 is accepted at the Host check and rejected at
+// the bearer check when no/odd credentials are sent.
 type StartServer = (opts: {
   tools: unknown[];
   env?: Record<string, string | number | undefined>;
@@ -107,5 +110,48 @@ describe("betterai-server boot + /health bearer gate", () => {
       body: JSON.stringify({ context: { file_paths: [], intent: "test" } }),
     });
     expect(res.status).toBe(401);
+  });
+
+  test("POST /mcp without a bearer token returns HTTP 401 (auth wraps the MCP endpoint)", async () => {
+    if (!server) return;
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("POST /mcp with a valid bearer but no session and a non-initialize body returns a JSON-RPC 400", async () => {
+    if (!server) return;
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { jsonrpc: string; error: { code: number } };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.error.code).toBe(-32000);
+  });
+
+  test("GET /mcp without a session id returns a JSON-RPC 400 (SSE stream requires a session)", async () => {
+    if (!server) return;
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      headers: { authorization: `Bearer ${TOKEN}`, accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("the obsolete /mcp/sse keep-alive route is gone", async () => {
+    if (!server) return;
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp/sse`, {
+      headers: { authorization: `Bearer ${TOKEN}`, accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(404);
   });
 });

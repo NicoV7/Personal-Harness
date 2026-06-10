@@ -20,10 +20,17 @@
 //   - Cache keys include scope + repo_root — handled in retrieve/.
 //   - Audit emits use validateAuditEvent — handled in audit/jsonl.ts.
 
+import { randomUUID } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z, type ZodRawShape } from "zod";
 
 import { bearerMiddleware } from "./auth/bearer.js";
 import { ConnectionLimiter } from "./cache/connection-limiter.js";
@@ -39,6 +46,7 @@ import { RepoDetector } from "./scope/repo-detector.js";
 import { DomainRouter } from "./retrieve/router.js";
 import { RetrievalOrchestrator } from "./retrieve/index.js";
 import { registerHttpSseTransport } from "./transport/http-sse.js";
+import type { SubagentClass } from "./audit/jsonl.js";
 
 // ---- Public types re-exported for Team C ------------------------------
 
@@ -117,7 +125,8 @@ function readEnv(): ResolvedEnv {
 
 export interface StartedServer {
   app: Hono;
-  mcpServer: McpServer;
+  /** Live MCP session count (diagnostics + tests). */
+  sessionCount: () => number;
   shutdown: () => Promise<void>;
   port: number;
 }
@@ -185,17 +194,24 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
     config: env,
   };
 
-  // ---- 4. Build the MCP server + register tools -------------------------
-  const mcpServer = new McpServer(
-    { name: "betterai", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
-  for (const tool of opts.tools) {
-    registerMcpTool(mcpServer, tool, ctx);
-  }
+  // ---- 4. MCP session factory --------------------------------------------
+  // Statefulness lives in the transport layer: each MCP session gets its
+  // own McpServer + transport pair, but every session shares the SAME
+  // ToolContext singletons assembled above (cache, limiter, audit writer,
+  // corpus reader).  The factory closes over `ctx` so the transport module
+  // never imports tool implementations.
+  const createMcpServer = () => buildMcpServer(opts.tools, ctx);
 
   // ---- 5. Build the Hono app --------------------------------------------
   const app = new Hono();
+
+  // Hosts we accept, derived from the env layer (DNS-rebinding defense).
+  // `localhost` is a loopback alias of the env-configured bind host, not
+  // an independent hardcoded host (per config-from-env-not-hardcoded).
+  const allowedHosts = new Set([
+    `${env.BETTERAI_BIND_HOST}:${env.BETTERAI_MCP_PORT}`,
+    `localhost:${env.BETTERAI_MCP_PORT}`,
+  ]);
 
   // Bearer middleware before any tool dispatch — single chokepoint per
   // .betterai/rules/STANDARDS/security/mcp-tools-require-bearer.
@@ -203,6 +219,7 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
     "*",
     bearerMiddleware({
       tokenPath: env.BETTERAI_TOKEN_PATH,
+      allowedHosts,
       onBypass: (info) =>
         auditLog({
           event_type: "explain",
@@ -233,7 +250,10 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
     }),
   );
 
-  registerHttpSseTransport(app, { mcpServer, limiter });
+  const transportHandle = registerHttpSseTransport(app, {
+    createMcpServer,
+    limiter,
+  });
 
   // ---- 6. Bind the listener ---------------------------------------------
   const server = serve({
@@ -243,6 +263,9 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
   });
 
   const shutdown = async () => {
+    // Tear down live MCP sessions first so their SSE streams release the
+    // sockets; otherwise server.close() waits on them forever.
+    await transportHandle.closeAllSessions();
     await new Promise<void>((resolve) => {
       (server as unknown as { close: (cb: () => void) => void }).close(() =>
         resolve(),
@@ -252,58 +275,86 @@ export async function startServer(opts: StartOptions): Promise<StartedServer> {
 
   return {
     app,
-    mcpServer,
+    sessionCount: transportHandle.sessionCount,
     shutdown,
     port: env.BETTERAI_MCP_PORT,
   };
 }
 
 /**
+ * Build a fresh high-level McpServer with every tool registered against
+ * the SHARED ToolContext.  Called once per MCP session by the transport
+ * layer's session factory.
+ */
+function buildMcpServer(tools: McpTool[], ctx: ToolContext): McpServer {
+  const server = new McpServer(
+    { name: "betterai", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+  for (const tool of tools) {
+    registerMcpTool(server, tool, ctx);
+  }
+  return server;
+}
+
+/** The `extra` shape the SDK passes to registerTool callbacks. */
+type McpToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+/**
  * Bridge between the framework-agnostic McpTool contract and the SDK's
- * registry.  Threads the DI ctx + per-call meta into every handler.
+ * registry.  Threads the DI ctx + per-call meta into every handler and
+ * wraps the handler's plain return value in the MCP result envelope.
+ *
+ * The tool files export `inputSchema` as a Zod raw shape — exactly what
+ * `McpServer.registerTool` accepts (the SDK validates arguments against
+ * it before invoking the callback).  Handler throws are caught by the
+ * SDK and surfaced as `isError: true` tool results, never HTTP 500s.
  */
 function registerMcpTool(
   mcpServer: McpServer,
   tool: McpTool,
   ctx: ToolContext,
 ): void {
-  const anyServer = mcpServer as unknown as {
-    tool?: (
-      name: string,
-      description: string,
-      schema: Record<string, unknown>,
-      handler: (input: unknown, extra?: unknown) => Promise<unknown>,
-    ) => void;
-  };
-  if (typeof anyServer.tool !== "function") {
-    // TODO(phase-1.1): when the SDK exposes a different registration
-    //                  shape, adapt here.  We deliberately don't depend
-    //                  on the SDK's internal types beyond this point so
-    //                  upgrades are local to this file.
-    return;
-  }
-  anyServer.tool(
+  mcpServer.registerTool(
     tool.name,
-    tool.description,
-    tool.inputSchema,
-    async (input, extra) => {
-      const meta = extractMeta(extra);
-      return tool.handler(input, ctx, meta);
+    {
+      description: tool.description,
+      inputSchema: tool.inputSchema as ZodRawShape,
+    },
+    async (args: unknown, extra: McpToolExtra): Promise<CallToolResult> => {
+      const meta = extractMeta(args, extra);
+      const out = await tool.handler(args, ctx, meta);
+      return {
+        content: [{ type: "text", text: JSON.stringify(out) }],
+        structuredContent: out as Record<string, unknown>,
+      };
     },
   );
 }
 
-function extractMeta(extra: unknown): ToolCallMeta {
-  const e = (extra ?? {}) as Partial<ToolCallMeta> & {
-    _meta?: Partial<ToolCallMeta>;
+/**
+ * Assemble the per-call ToolCallMeta from (in priority order):
+ *   1. the request's `_meta` (clients thread agent/session identity here),
+ *   2. the tool-call arguments themselves (legacy threading path),
+ *   3. the SDK transport's session id as the agent_session_id fallback —
+ *      so every audit event carries a stable session correlation key even
+ *      when the client passes no `_meta` at all.
+ */
+function extractMeta(args: unknown, extra: McpToolExtra): ToolCallMeta {
+  const fromMeta = (extra._meta ?? {}) as Record<string, unknown>;
+  const fromArgs = (
+    args !== null && typeof args === "object" ? args : {}
+  ) as Record<string, unknown>;
+  const pick = (key: string): string | null => {
+    const v = fromMeta[key] ?? fromArgs[key];
+    return typeof v === "string" && v.length > 0 ? v : null;
   };
-  const src = e._meta ?? e;
   return {
-    agent_session_id: src.agent_session_id ?? null,
-    parent_agent_session_id: src.parent_agent_session_id ?? null,
-    subagent_class: src.subagent_class ?? "main",
+    agent_session_id: pick("agent_session_id") ?? extra.sessionId ?? null,
+    parent_agent_session_id: pick("parent_agent_session_id"),
+    subagent_class: (pick("subagent_class") as SubagentClass | null) ?? "main",
     tool_call_id:
-      (src as { tool_call_id?: string }).tool_call_id ??
-      `tc_${Math.random().toString(36).slice(2)}`,
+      pick("tool_call_id") ??
+      `tc_${extra.sessionId ?? "nosession"}_${String(extra.requestId ?? randomUUID())}`,
   };
 }
