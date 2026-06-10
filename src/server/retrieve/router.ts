@@ -62,13 +62,20 @@ function loadRouterYaml(path: string): DomainRouterConfig {
   return normalize(tree);
 }
 
+// Single source of truth for the "no router config / key absent" fallback budget.
+// Both emptyConfig() (no file) and normalize() (file present, key missing) reference
+// these so the two paths cannot silently diverge.
+const DEFAULT_ROUTER_DOMAINS = ["maintainability", "methodology"];
+const DEFAULT_MAX_RULES_PER_DOMAIN = 4;
+const DEFAULT_MAX_TOTAL_RULES = 12;
+
 function emptyConfig(): DomainRouterConfig {
   return {
     routers: [],
     defaults: {
-      domains: ["maintainability", "methodology"],
-      max_rules_per_domain: 4,
-      max_total_rules: 12,
+      domains: [...DEFAULT_ROUTER_DOMAINS],
+      max_rules_per_domain: DEFAULT_MAX_RULES_PER_DOMAIN,
+      max_total_rules: DEFAULT_MAX_TOTAL_RULES,
     },
   };
 }
@@ -214,9 +221,10 @@ function normalize(tree: YamlNode): DomainRouterConfig {
   return {
     routers: routersRaw,
     defaults: {
-      domains: defaultsRaw.domains ?? ["maintainability", "methodology"],
-      max_rules_per_domain: defaultsRaw.max_rules_per_domain ?? 4,
-      max_total_rules: defaultsRaw.max_total_rules ?? 12,
+      domains: defaultsRaw.domains ?? [...DEFAULT_ROUTER_DOMAINS],
+      max_rules_per_domain:
+        defaultsRaw.max_rules_per_domain ?? DEFAULT_MAX_RULES_PER_DOMAIN,
+      max_total_rules: defaultsRaw.max_total_rules ?? DEFAULT_MAX_TOTAL_RULES,
     },
   };
 }

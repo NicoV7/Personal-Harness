@@ -10,6 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { LRUCache } from "lru-cache";
+import { LRU_DEFAULT_MAX, LRU_DEFAULT_TTL_MS } from "./constants.js";
 
 export type Scope = "global" | "repo";
 
@@ -75,8 +76,8 @@ export class ContextCache {
 
   constructor(opts: ContextCacheOptions = {}) {
     this.lru = new LRUCache<string, CachedRetrieval>({
-      max: opts.max ?? 256,
-      ttl: opts.ttlMs ?? 60_000,
+      max: opts.max ?? LRU_DEFAULT_MAX,
+      ttl: opts.ttlMs ?? LRU_DEFAULT_TTL_MS,
     });
   }
 

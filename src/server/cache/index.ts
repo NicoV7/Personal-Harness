@@ -12,6 +12,7 @@
 // that doesn't lock them into the retrieval-specific envelope.
 
 import { LRUCache } from "lru-cache";
+import { LRU_DEFAULT_MAX, LRU_DEFAULT_TTL_MS } from "./constants.js";
 
 export {
   ContextCache,
@@ -44,8 +45,8 @@ export function createContextCache<V>(
   opts: CreateContextCacheOptions = {},
 ): GenericCache<V> {
   const lru = new LRUCache<string, { value: V }>({
-    max: opts.max ?? 256,
-    ttl: opts.ttlMs ?? 60_000,
+    max: opts.max ?? LRU_DEFAULT_MAX,
+    ttl: opts.ttlMs ?? LRU_DEFAULT_TTL_MS,
   });
   return {
     get(key: string): V | undefined {
