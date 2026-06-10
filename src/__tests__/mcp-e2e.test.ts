@@ -35,7 +35,7 @@ import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { startServer, type StartedServer } from "../server/main.js";
+import { startServer, type StartedServer } from "../app.js";
 import retrieveContext from "../mcp-tools/retrieve-context.js";
 import retrieveRules from "../mcp-tools/retrieve-rules.js";
 import retrieveSkills from "../mcp-tools/retrieve-skills.js";

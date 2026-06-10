@@ -1,4 +1,4 @@
-// src/server/retrieve/index.ts
+// src/retrieval/index.ts
 //
 // The merged retrieval orchestrator: query global + repo, apply override
 // semantics, rank, return.
@@ -36,7 +36,7 @@ import {
   GrepScorer,
   type MatchContext,
 } from "./grep.js";
-import type { RetrievalScorer } from "../../contracts/retrieval.js";
+import type { RetrievalScorer } from "../contracts/retrieval.js";
 import type { RepoDetector } from "../scope/repo-detector.js";
 
 export type ScopeFilter = "merged" | "global" | "repo";
@@ -87,7 +87,7 @@ export interface RetrievalDeps {
   auditLog: AuditLogFn;
   /**
    * Matching strategy behind the async-batch RetrievalScorer seam
-   * (src/contracts/retrieval.ts).  src/server/main.ts selects one from
+   * (src/contracts/retrieval.ts).  src/app.ts selects one from
    * BETTERAI_RETRIEVAL_MODE; omitted → grep (Phase 1.0 behavior).
    */
   scorer?: RetrievalScorer;

@@ -1,4 +1,4 @@
-// src/server/cache/connection-limiter.ts
+// src/cache/connection-limiter.ts
 //
 // In-flight concurrency limiter for retrieve_* calls.
 //
@@ -16,12 +16,12 @@ import {
   LIMITER_DEFAULT_MAX_IN_FLIGHT,
   LIMITER_DEFAULT_QUEUE_MAX,
 } from "./constants.js";
-import { TooManyInFlightError } from "../../errors/index.js";
+import { TooManyInFlightError } from "../errors/index.js";
 
 // TooManyInFlightError now lives in the central errors layer (BAI-510); it
 // preserves its observable `.code === "too_many_in_flight"` / `.status === 429`
 // shape. Re-exported here so existing importers (transport, tests) are unchanged.
-export { TooManyInFlightError } from "../../errors/index.js";
+export { TooManyInFlightError } from "../errors/index.js";
 
 interface Waiter {
   resolve: () => void;

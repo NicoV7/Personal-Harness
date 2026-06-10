@@ -1,4 +1,4 @@
-// src/server/retrieve/grep.ts
+// src/retrieval/grep.ts
 //
 // Phase 1.0 retrieval is grep-only: match a rule/skill/memory against an
 // agent's context via simple substring/glob hits on applies_when fields.
@@ -7,7 +7,7 @@
 // other call sites and tests use them directly — and `GrepScorer` wraps
 // them behind the shared async-batch `RetrievalScorer` seam
 // (src/contracts/retrieval.ts) so the orchestrator can swap in the
-// MiniLM embedding / hybrid scorers (src/server/retrieve/embeddings.ts)
+// MiniLM embedding / hybrid scorers (src/retrieval/embeddings.ts)
 // without changing.
 
 import type {
@@ -19,14 +19,14 @@ import type {
 import type {
   RetrievalMode,
   RetrievalScorer,
-} from "../../contracts/retrieval.js";
+} from "../contracts/retrieval.js";
 import {
   SCORE_BODY_HIT,
   SCORE_INTENT_MATCH,
   SCORE_PATH_MATCH,
   SCORE_SYMBOL_MATCH,
   SEVERITY_WEIGHT,
-} from "../../constants/retrieval.js";
+} from "../constants/retrieval.js";
 
 export interface MatchContext {
   file_paths: string[];

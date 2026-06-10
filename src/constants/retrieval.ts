@@ -6,7 +6,7 @@
 // width, hybrid blend weight/floor, the per-signal grep score points and the
 // severity weight map are all policy values that belong in ONE named place.
 
-import type { Rule } from "../server/corpus/reader.js";
+import type { Rule } from "../corpus/reader.js";
 
 // ---- Embeddings / hybrid -------------------------------------------------
 

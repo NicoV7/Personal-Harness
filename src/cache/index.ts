@@ -1,4 +1,4 @@
-// src/server/cache/index.ts
+// src/cache/index.ts
 //
 // Public surface of the cache module.
 //

@@ -13,14 +13,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Memory, Rule, Skill } from "../server/corpus/reader.js";
+import type { Memory, Rule, Skill } from "../corpus/reader.js";
 import type { MatchContext } from "../contracts/retrieval.js";
 import {
   GrepScorer,
   scoreMemory,
   scoreRule,
   scoreSkill,
-} from "../server/retrieve/grep.js";
+} from "../retrieval/grep.js";
 import {
   EmbeddingScorer,
   HybridScorer,
@@ -34,7 +34,7 @@ import {
   hybridScore,
   queryText,
   type EmbedFn,
-} from "../server/retrieve/embeddings.js";
+} from "../retrieval/embeddings.js";
 
 // ---- Fixtures ---------------------------------------------------------------
 

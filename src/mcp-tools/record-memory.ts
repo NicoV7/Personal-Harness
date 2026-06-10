@@ -27,8 +27,8 @@ import type {
   ToolCallMeta,
   McpTool,
   AuditEvent,
-} from '../server/main.js'
-import { detectRepoRoot } from '../server/scope/detect.js'
+} from '../app.js'
+import { detectRepoRoot } from '../scope/detect.js'
 import { ValidationError } from '../errors/index.js'
 
 const memoryFrontmatterSchema = z
@@ -206,7 +206,7 @@ export default tool
  *   <body>
  *
  * Hand-rolled to avoid pulling in `yaml` for the Phase 1.0 scaffold —
- * matches the YAML-ish parser in src/server/corpus/reader.ts.
+ * matches the YAML-ish parser in src/corpus/reader.ts.
  */
 function serializeMemory(memory: {
   frontmatter: Record<string, unknown>

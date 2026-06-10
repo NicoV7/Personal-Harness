@@ -2,7 +2,7 @@
 // The detector walks up from a file path until it finds a sibling `.git/`
 // directory; if none, returns null.
 //
-// Team B owns src/server/scope/detect.ts; this test imports it via the shared
+// Team B owns src/scope/detect.ts; this test imports it via the shared
 // contract path. If Team B's file isn't compiled at merge time the test
 // stands as the contract assertion — it documents the exact shape we expect.
 
@@ -12,10 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // IMPORT CONTRACT: Team B exports `detectRepoRoot(paths: string[]): string | null`
-// from src/server/scope/detect.ts.
+// from src/scope/detect.ts.
 let detectRepoRoot: (paths: string[]) => string | null;
 try {
-  const mod = await import("../server/scope/detect.js");
+  const mod = await import("../scope/detect.js");
   detectRepoRoot = mod.detectRepoRoot;
 } catch {
   // Team B's module not present yet — fall back to a no-op so the harness

@@ -3,7 +3,7 @@
 //
 // The audit writer is BetterAI's ONLY observability surface; a silent
 // IO failure here blackholes the entire compliance story. These tests
-// pin the failure contract implemented in src/server/audit/jsonl.ts:
+// pin the failure contract implemented in src/audit/jsonl.ts:
 //
 //   - append() THROWS a typed AuditIoError on filesystem failure
 //     (never a raw errno crash, never a silent drop),
@@ -33,7 +33,7 @@ import {
   AuditIoError,
   JsonlAuditWriter,
   type AuditEvent,
-} from "../server/audit/jsonl.js";
+} from "../audit/jsonl.js";
 
 const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
 

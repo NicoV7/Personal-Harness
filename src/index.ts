@@ -2,7 +2,7 @@
 //
 // Phase 1.0 (Wave 3) scaffold: this file is a thin shim. All bootstrap logic
 // — transport registration, bearer-token middleware, MCP tool dispatch,
-// corpus reader wiring, audit pipe — lives in src/server/main.ts (Team B's
+// corpus reader wiring, audit pipe — lives in src/app.ts (Team B's
 // slice). Keeping the entrypoint trivial means the Dockerfile CMD never has
 // to change as the server grows.
 //
@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { startServer } from './server/main.js';
+import { startServer } from './app.js';
 
 // ---- dotenv loader -----------------------------------------------------
 //

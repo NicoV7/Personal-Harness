@@ -19,7 +19,7 @@ import {
   constantTimeEqual,
   BearerTokenEmptyError,
   BearerTokenMissingError,
-} from "../server/auth/bearer.js";
+} from "../auth/bearer.js";
 import {
   allowedHostsFromEnv,
   allowedHostsFromProcessEnv,
@@ -220,7 +220,7 @@ describe("bearer middleware: token file semantics at construction", () => {
   });
 
   test("token rotation requires restart: rewriting the file does NOT change the accepted token", async () => {
-    // Decision (b) in src/server/auth/bearer.ts: the token is cached at
+    // Decision (b) in src/auth/bearer.ts: the token is cached at
     // construction; this test pins that contract so a future re-read
     // implementation changes it deliberately, not accidentally.
     const tokenPath = writeTokenFile(`${TOKEN}\n`);
@@ -251,7 +251,7 @@ describe("bearer middleware: constant-time comparison", () => {
     // Structural assertion, not a microbenchmark: the source of the auth
     // module must route token comparison through timingSafeEqual.
     const source = readFileSync(
-      fileURLToPath(new URL("../server/auth/bearer.ts", import.meta.url)),
+      fileURLToPath(new URL("../auth/bearer.ts", import.meta.url)),
       "utf8",
     );
     expect(source).toMatch(

@@ -2,8 +2,8 @@
 //
 // SHARED CONTRACT — retrieval shapes (schema_version 1.5).
 //
-// Mirrors the LIVE shapes in src/server/retrieve/grep.ts and
-// src/server/retrieve/index.ts; drift guards at the bottom fail
+// Mirrors the LIVE shapes in src/retrieval/grep.ts and
+// src/retrieval/index.ts; drift guards at the bottom fail
 // `npm run typecheck` on any divergence.
 //
 // PLUS the NEW `RetrievalScorer` seam that the Phase-1.5 embeddings
@@ -18,8 +18,8 @@ import type { AssertTrue, MutuallyAssignable } from "./audit.js";
 // frontmatter Zod schemas live there); re-exported type-only so contract
 // consumers have a single import surface. Contract-ifying the corpus
 // shapes is a later-wave item.
-export type { Memory, Rule, Skill } from "../server/corpus/reader.js";
-import type { Memory, Rule, Skill } from "../server/corpus/reader.js";
+export type { Memory, Rule, Skill } from "../corpus/reader.js";
+import type { Memory, Rule, Skill } from "../corpus/reader.js";
 
 // ---- Matching ------------------------------------------------------------
 
@@ -108,7 +108,7 @@ export type RetrievalMode = (typeof RETRIEVAL_MODES)[number];
 /**
  * Async batch scoring seam between the orchestrator and the matching
  * strategy. Phase 1.0 ships a grep implementation (wrapping
- * src/server/retrieve/grep.ts scoreRule/scoreSkill/scoreMemory); the
+ * src/retrieval/grep.ts scoreRule/scoreSkill/scoreMemory); the
  * Wave-3 embeddings specialist adds a MiniLM implementation and a
  * hybrid that blends both. The orchestrator selects an implementation
  * from BETTERAI_RETRIEVAL_MODE (see src/contracts/env.ts) and never
@@ -147,12 +147,12 @@ export interface RetrievalScorer {
 import type {
   MatchContext as LiveMatchContext,
   ScoredArtifact as LiveScoredArtifact,
-} from "../server/retrieve/grep.js";
+} from "../retrieval/grep.js";
 import type {
   RetrieveInput as LiveRetrieveInput,
   RetrieveOutput as LiveRetrieveOutput,
   ScopeFilter as LiveScopeFilter,
-} from "../server/retrieve/index.js";
+} from "../retrieval/index.js";
 
 export type RetrievalContractDriftChecks = [
   AssertTrue<MutuallyAssignable<MatchContext, LiveMatchContext>>,

@@ -1,4 +1,4 @@
-// src/server/transport/http-sse.ts
+// src/transport/http-sse.ts
 //
 // Hono routes that bridge MCP Streamable HTTP traffic into the
 // @modelcontextprotocol/sdk via WebStandardStreamableHTTPServerTransport
@@ -36,11 +36,11 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { TooManyInFlightError } from "../cache/connection-limiter.js";
 import type { ConnectionLimiter } from "../cache/connection-limiter.js";
-import { IDLE_SESSION_GC_MS, RETRY_AFTER_MS } from "../../constants/transport.js";
+import { IDLE_SESSION_GC_MS, RETRY_AFTER_MS } from "../constants/transport.js";
 
 // Idle-session GC + limiter-backoff windows live in src/constants/transport.ts.
 // We sweep opportunistically on each request (mirroring
-// src/server/audit/missed-retrieval.ts) instead of holding a timer that would
+// src/audit/missed-retrieval.ts) instead of holding a timer that would
 // keep the process alive.
 
 // JSON-RPC error codes (mirroring the SDK transport's own choices).

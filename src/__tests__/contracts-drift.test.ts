@@ -42,22 +42,22 @@ import {
 import type {
   AuditEvent as LiveAuditEvent,
   AuditEventRuleEntry as LiveAuditEventRuleEntry,
-} from "../server/audit/jsonl.js";
+} from "../audit/jsonl.js";
 import type {
   MatchContext as LiveMatchContext,
   ScoredArtifact as LiveScoredArtifact,
-} from "../server/retrieve/grep.js";
+} from "../retrieval/grep.js";
 import type {
   OrchestratorMeta as LiveOrchestratorMeta,
   RetrieveInput as LiveRetrieveInput,
   RetrieveOutput as LiveRetrieveOutput,
   ScopeFilter as LiveScopeFilter,
-} from "../server/retrieve/index.js";
+} from "../retrieval/index.js";
 import type {
   McpTool as LiveMcpTool,
   ResolvedEnv as LiveResolvedEnv,
   ToolCallMeta as LiveToolCallMeta,
-} from "../server/main.js";
+} from "../app.js";
 
 // ---- 1. Static drift assertions (erased at runtime) -----------------------
 //
@@ -240,7 +240,7 @@ describe("contracts: RetrievalScorer seam", () => {
   test("a deterministic stub satisfies the interface and is mode-tagged", async () => {
     expect(stubScorer.mode).toBe("grep");
     const ctx: ContractMatchContext = {
-      file_paths: ["src/server/main.ts"],
+      file_paths: ["src/app.ts"],
       intent: "add an endpoint",
       symbols: ["startServer"],
       recent_diff: "",

@@ -1,4 +1,4 @@
-// src/server/scope/repo-detector.ts
+// src/scope/repo-detector.ts
 //
 // Repo-root walk-up + .betterai/ presence check, with a 60s mtime-keyed
 // cache.
@@ -20,7 +20,7 @@ import { dirname, resolve, sep } from "node:path";
 import {
   MAX_WALK_UP_DEPTH,
   REPO_DETECT_CACHE_TTL_MS,
-} from "../../constants/scope.js";
+} from "../constants/scope.js";
 
 export interface RepoDetection {
   repo_root: string | null;

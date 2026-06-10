@@ -1,4 +1,4 @@
-// src/server/audit/jsonl.ts
+// src/audit/jsonl.ts
 //
 // Append-only JSONL audit writer with rotation.
 //
@@ -23,7 +23,7 @@ import {
   AUDIT_FILE_MODE,
   AUDIT_MAX_AGE_MS,
   AUDIT_MAX_BYTES,
-} from "../../constants/audit.js";
+} from "../constants/audit.js";
 
 export type SubagentClass =
   | "main"
@@ -86,8 +86,8 @@ export interface AuditEvent {
 // AuditIoError keeps the errno string on `.code`, the audit path on `.path`,
 // and the original errno error on `.cause`. Re-exported so existing importers
 // (this module, the audit-writer-io tests) are unchanged.
-export { AuditIoError, AuditValidationError } from "../../errors/index.js";
-import { AuditIoError, AuditValidationError } from "../../errors/index.js";
+export { AuditIoError, AuditValidationError } from "../errors/index.js";
+import { AuditIoError, AuditValidationError } from "../errors/index.js";
 
 /**
  * Validate the parent-session invariant.  Called from `append` so no

@@ -1,6 +1,6 @@
 // G7 (docs/RELIABILITY-TEST-GAPS.md): RetrievalOrchestrator direct tests.
 //
-// The orchestrator (src/server/retrieve/index.ts) is the single chokepoint
+// The orchestrator (src/retrieval/index.ts) is the single chokepoint
 // where the scope-aware context_hash is computed, the cache is consulted,
 // and the audit event is emitted. Until now it was only tested transitively
 // through retrieve-context.test.ts. These tests exercise it in isolation
@@ -29,13 +29,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { RetrievalOrchestrator } from "../server/retrieve/index.js";
-import type { OrchestratorMeta, RetrieveInput } from "../server/retrieve/index.js";
-import { DomainRouter } from "../server/retrieve/router.js";
-import { ContextCache } from "../server/cache/context-hash.js";
-import { RepoDetector } from "../server/scope/repo-detector.js";
-import { GrepScorer } from "../server/retrieve/grep.js";
-import type { AuditEvent } from "../server/audit/jsonl.js";
+import { RetrievalOrchestrator } from "../retrieval/index.js";
+import type { OrchestratorMeta, RetrieveInput } from "../retrieval/index.js";
+import { DomainRouter } from "../retrieval/router.js";
+import { ContextCache } from "../cache/context-hash.js";
+import { RepoDetector } from "../scope/repo-detector.js";
+import { GrepScorer } from "../retrieval/grep.js";
+import type { AuditEvent } from "../audit/jsonl.js";
 import type {
   MatchContext,
   Memory,

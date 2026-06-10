@@ -1,4 +1,4 @@
-// src/server/main.ts
+// src/app.ts
 //
 // Hono app + MCP SDK registration + tool registration via dependency
 // injection.
@@ -33,10 +33,10 @@ import type {
 import type { ZodRawShape } from "zod";
 
 import { bearerMiddleware } from "./auth/bearer.js";
-import { allowedHostsFromEnv, EnvSchema } from "../contracts/env.js";
-import type { ResolvedEnv } from "../contracts/env.js";
-export type { ResolvedEnv } from "../contracts/env.js";
-import { createScorer } from "./retrieve/embeddings.js";
+import { allowedHostsFromEnv, EnvSchema } from "./contracts/env.js";
+import type { ResolvedEnv } from "./contracts/env.js";
+export type { ResolvedEnv } from "./contracts/env.js";
+import { createScorer } from "./retrieval/embeddings.js";
 import { ConnectionLimiter } from "./cache/connection-limiter.js";
 import { ContextCache } from "./cache/context-hash.js";
 import {
@@ -44,7 +44,7 @@ import {
   LRU_DEFAULT_TTL_MS,
   LIMITER_DEFAULT_MAX_IN_FLIGHT,
   LIMITER_DEFAULT_QUEUE_MAX,
-} from "../constants/cache.js";
+} from "./constants/cache.js";
 import {
   JsonlAuditWriter,
   type AuditEvent,
@@ -53,8 +53,8 @@ import {
 import { MissedRetrievalDetector } from "./audit/missed-retrieval.js";
 import { CorpusReader } from "./corpus/reader.js";
 import { RepoDetector } from "./scope/repo-detector.js";
-import { DomainRouter } from "./retrieve/router.js";
-import { RetrievalOrchestrator } from "./retrieve/index.js";
+import { DomainRouter } from "./retrieval/router.js";
+import { RetrievalOrchestrator } from "./retrieval/index.js";
 import { registerHttpSseTransport } from "./transport/http-sse.js";
 import type { SubagentClass } from "./audit/jsonl.js";
 
@@ -67,7 +67,7 @@ export type {
   RetrieveOutput,
   ScopeFilter,
   OrchestratorMeta,
-} from "./retrieve/index.js";
+} from "./retrieval/index.js";
 
 /**
  * The dependency-injection context that Team C's tool handlers receive

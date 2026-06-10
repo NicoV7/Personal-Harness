@@ -1,4 +1,4 @@
-// src/server/audit/missed-retrieval.ts
+// src/audit/missed-retrieval.ts
 //
 // Lever (b) of the auto-retrieve strategy (eng review §1.6):
 //
@@ -19,7 +19,7 @@ import type { AuditLogFn, SubagentClass } from "./jsonl.js";
 import {
   MISSED_RETRIEVAL_RECENCY_MS,
   MISSED_RETRIEVAL_SESSION_GC_MS,
-} from "../../constants/audit.js";
+} from "../constants/audit.js";
 
 /**
  * Tools the agent calls that are read-only and should *not* require a

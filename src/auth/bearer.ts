@@ -1,4 +1,4 @@
-// src/server/auth/bearer.ts
+// src/auth/bearer.ts
 //
 // Bearer-token middleware for hono, plus DNS-rebinding mitigation via
 // Host-header verification.
@@ -35,7 +35,7 @@ import type { MiddlewareHandler } from "hono";
 import {
   DEFAULT_TOKEN_PATH,
   allowedHostsFromProcessEnv,
-} from "../../contracts/env.js";
+} from "../contracts/env.js";
 
 // ---- Typed errors -------------------------------------------------------
 //
@@ -48,11 +48,11 @@ export {
   BearerTokenError,
   BearerTokenMissingError,
   BearerTokenEmptyError,
-} from "../../errors/index.js";
+} from "../errors/index.js";
 import {
   BearerTokenMissingError,
   BearerTokenEmptyError,
-} from "../../errors/index.js";
+} from "../errors/index.js";
 
 // ---- Options -------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 // Integration test for the retrieve_context MCP tool against REAL tmpdir
 // corpora, driven through a REAL RetrievalOrchestrator (no mocked reader,
-// no mocked cache — the same wiring src/server/main.ts builds).
+// no mocked cache — the same wiring src/app.ts builds).
 //
 // Contract per docs/design/v4.1-scoping-extension.md §3 (merge + id-collision
 // override) plus the G5-M1 structured no-match shape
@@ -25,12 +25,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import retrieveContext from "../mcp-tools/retrieve-context.js";
-import type { ToolContext, ToolCallMeta } from "../server/main.js";
-import { RetrievalOrchestrator } from "../server/retrieve/index.js";
-import { DomainRouter } from "../server/retrieve/router.js";
-import { ContextCache } from "../server/cache/context-hash.js";
-import { RepoDetector } from "../server/scope/repo-detector.js";
-import type { AuditEvent } from "../server/audit/jsonl.js";
+import type { ToolContext, ToolCallMeta } from "../app.js";
+import { RetrievalOrchestrator } from "../retrieval/index.js";
+import { DomainRouter } from "../retrieval/router.js";
+import { ContextCache } from "../cache/context-hash.js";
+import { RepoDetector } from "../scope/repo-detector.js";
+import type { AuditEvent } from "../audit/jsonl.js";
 
 // Loose view of the tool's output union so tests don't fight TS narrowing.
 interface RetrieveContextOut {
@@ -137,7 +137,7 @@ describe("retrieve_context through a real RetrievalOrchestrator", () => {
 
   /**
    * Build a fake ToolContext around a REAL orchestrator over the fixture
-   * corpora — the same construction pattern as src/server/main.ts
+   * corpora — the same construction pattern as src/app.ts
    * (DomainRouter, ContextCache, RepoDetector, fake audit writer). The
    * tool only touches ctx.orchestrator, so the remaining ToolContext
    * surface is intentionally absent.

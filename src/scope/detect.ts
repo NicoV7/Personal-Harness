@@ -1,4 +1,4 @@
-// src/server/scope/detect.ts
+// src/scope/detect.ts
 //
 // Functional facade over RepoDetector for callers (MCP tools, tests) that
 // just want "given these paths, where's the repo root?". Keeps the class

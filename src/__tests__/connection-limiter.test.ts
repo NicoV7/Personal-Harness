@@ -19,7 +19,7 @@ import { describe, test, expect } from "vitest";
 import {
   ConnectionLimiter,
   TooManyInFlightError,
-} from "../server/cache/connection-limiter.js";
+} from "../cache/connection-limiter.js";
 
 /** A promise whose resolution the test controls. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {

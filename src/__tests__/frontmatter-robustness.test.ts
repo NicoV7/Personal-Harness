@@ -3,7 +3,7 @@
 // G12 — corpus-load robustness against malformed frontmatter.
 //
 // Contract under test (pinned to the CURRENT reader behavior, per
-// src/server/corpus/reader.ts): a shape-invalid artifact is DROPPED with a
+// src/corpus/reader.ts): a shape-invalid artifact is DROPPED with a
 // ValidationIssue recorded on the snapshot — never normalized silently,
 // never thrown.  A malformed file must not prevent its valid siblings from
 // loading, and a 100%-invalid corpus must still yield a bootable (empty)
@@ -16,8 +16,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CorpusReader } from "../server/corpus/reader.js";
-import type { CorpusSnapshot } from "../server/corpus/reader.js";
+import { CorpusReader } from "../corpus/reader.js";
+import type { CorpusSnapshot } from "../corpus/reader.js";
 
 // ---- Fixture helpers -----------------------------------------------------
 

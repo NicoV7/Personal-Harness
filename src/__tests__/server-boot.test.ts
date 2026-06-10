@@ -35,7 +35,7 @@ type StartServer = (opts: {
 
 let startServer: StartServer | null;
 try {
-  startServer = (await import("../server/main.js")).startServer as unknown as StartServer;
+  startServer = (await import("../app.js")).startServer as unknown as StartServer;
 } catch {
   startServer = null;
 }

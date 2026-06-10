@@ -6,8 +6,8 @@
 // config-from-env-not-hardcoded.md, hosts/ports/paths may be hardcoded
 // here (as named default constants) and NOWHERE else.
 //
-// Covers the EXISTING vars (mirroring src/server/main.ts EnvSchema,
-// src/server/auth/bearer.ts defaults, and docker-compose.yml
+// Covers the EXISTING vars (mirroring src/app.ts EnvSchema,
+// src/auth/bearer.ts defaults, and docker-compose.yml
 // `environment:`) PLUS the NEW v1.5 vars that later waves consume:
 //
 //   - BETTERAI_ALLOWED_HOSTS    comma-separated host:port allowlist that
@@ -51,7 +51,7 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 // ---- The env schema ---------------------------------------------------------
 
 export const EnvSchema = z.object({
-  // -- Existing vars (must stay identical to src/server/main.ts) ----------
+  // -- Existing vars (must stay identical to src/app.ts) ----------
   BETTERAI_CORPUS_ROOT: z.string().default(DEFAULT_CORPUS_ROOT),
   BETTERAI_AUDIT_PATH: z.string().default(DEFAULT_AUDIT_PATH),
   BETTERAI_PROJECTS_ROOT: z.string().default(DEFAULT_PROJECTS_ROOT),
@@ -147,7 +147,7 @@ export function allowedHostsFromProcessEnv(
 
 // ---- Drift guard (no longer needed) ------------------------------------------
 //
-// This module USED to import `ResolvedEnv` back from src/server/main.js and
+// This module USED to import `ResolvedEnv` back from src/app.js and
 // assert a superset relation, because main.ts declared its own duplicate
 // EnvSchema. That duplicate has been removed: main.ts now imports EnvSchema +
 // ResolvedEnv FROM this module, so there is a single source of truth and

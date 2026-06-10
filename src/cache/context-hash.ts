@@ -1,4 +1,4 @@
-// src/server/cache/context-hash.ts
+// src/cache/context-hash.ts
 //
 // Deterministic context-hash + LRU cache for retrieval responses.
 //

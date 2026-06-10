@@ -7,7 +7,7 @@
 // on shapes in their prompts but each implementing the agreement
 // differently (docs/HANDOFF.md §"What NOT to do").
 //
-// The Zod schemas here mirror the LIVE shapes in src/server/audit/jsonl.ts
+// The Zod schemas here mirror the LIVE shapes in src/audit/jsonl.ts
 // exactly. Drift guards at the bottom of this file make `npm run
 // typecheck` fail if either side diverges — the import-flip (server
 // importing these contracts instead of defining its own) happens
@@ -127,7 +127,7 @@ import type {
   ArtifactKind as LiveArtifactKind,
   Scope as LiveScope,
   SubagentClass as LiveSubagentClass,
-} from "../server/audit/jsonl.js";
+} from "../audit/jsonl.js";
 
 export type AuditContractDriftChecks = [
   AssertTrue<MutuallyAssignable<AuditEvent, LiveAuditEvent>>,

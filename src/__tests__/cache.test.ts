@@ -9,8 +9,8 @@
 //      otherwise-identical contexts in different repos NEVER share a cache
 //      entry. This is the cross-corpus poisoning rule.
 //
-// Team B exports `createContextCache()` from src/server/cache/index.ts and
-// `contextHash(ctx)` from src/server/cache/context-hash.ts. Both are imported
+// Team B exports `createContextCache()` from src/cache/index.ts and
+// `contextHash(ctx)` from src/cache/context-hash.ts. Both are imported
 // dynamically so the test file loads even when those modules aren't compiled.
 
 import { describe, test, expect } from "vitest";
@@ -31,13 +31,13 @@ let createContextCache: <V>(opts: { max?: number; ttlMs?: number }) => {
   size(): number;
 };
 try {
-  const hashMod = await import("../server/cache/context-hash.js");
+  const hashMod = await import("../cache/context-hash.js");
   contextHash = hashMod.contextHash;
 } catch {
   contextHash = () => "stub";
 }
 try {
-  const cacheMod = await import("../server/cache/index.js");
+  const cacheMod = await import("../cache/index.js");
   createContextCache = cacheMod.createContextCache;
 } catch {
   // minimal in-test stub so import failures don't blow up the harness;

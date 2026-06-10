@@ -17,7 +17,7 @@ import type {
   McpTool,
   Rule,
   AuditEvent,
-} from '../server/main.js'
+} from '../app.js'
 import { RuleNotFoundError } from '../errors/index.js'
 
 const inputSchema = z.object({

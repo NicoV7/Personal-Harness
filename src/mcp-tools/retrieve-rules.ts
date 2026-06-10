@@ -16,7 +16,7 @@ import type {
   ToolCallMeta,
   McpTool,
   Rule,
-} from '../server/main.js'
+} from '../app.js'
 
 const contextSchema = z
   .object({

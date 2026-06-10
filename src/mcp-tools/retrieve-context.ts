@@ -5,7 +5,7 @@
  * for the agent's current intent.
  *
  * The handler delegates the WHOLE pipeline to ctx.orchestrator
- * (src/server/retrieve/index.ts): repo-root detection, the scope-aware
+ * (src/retrieval/index.ts): repo-root detection, the scope-aware
  * context_hash cache, the per-call CorpusReader with the correct repoRoot,
  * DomainRouter capping, the async RetrievalScorer seam, and the single
  * 'retrieve' audit event. The tool owns only its input schema and the
@@ -27,7 +27,7 @@ import type {
   Rule,
   Skill,
   Memory,
-} from '../server/main.js'
+} from '../app.js'
 import type { RetrieveMatchInfo } from '../contracts/retrieval.js'
 
 const contextSchema = z

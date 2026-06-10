@@ -5,7 +5,7 @@
 // Per .betterai/rules/STANDARDS/maintainability/no-magic-numbers-import-from-constants:
 // these policy literals (LRU capacity/TTL, limiter backpressure thresholds)
 // live in ONE named place. This module is the canonical definition;
-// src/server/cache/constants.ts re-exports from here so existing importers
+// src/cache/constants.ts re-exports from here so existing importers
 // keep working without a second copy of the values.
 
 /** Max entries in the retrieval LRU cache before eviction. */

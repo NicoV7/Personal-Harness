@@ -1,11 +1,11 @@
-// src/server/retrieve/embeddings.ts
+// src/retrieval/embeddings.ts
 //
 // Phase 1.5 (Wave 6): MiniLM embedding retrieval behind the shared
 // `RetrievalScorer` seam (src/contracts/retrieval.ts), plus the hybrid
 // scorer that blends grep's exact signals with semantic similarity.
 //
 // Design constraints (per the corpus STANDARDS rules):
-//   - Config from env, resolved by the CALLER (src/server/main.ts reads
+//   - Config from env, resolved by the CALLER (src/app.ts reads
 //     BETTERAI_RETRIEVAL_MODE / BETTERAI_MODEL_CACHE_DIR and passes them
 //     in).  This module never reads process.env directly.
 //   - No magic numbers: every weight/threshold below is a named,
@@ -32,14 +32,14 @@ import type {
   RetrievalMode,
   RetrievalScorer,
   ScoredArtifact,
-} from "../../contracts/retrieval.js";
+} from "../contracts/retrieval.js";
 import { GrepScorer } from "./grep.js";
 import {
   EMBED_BODY_EXCERPT_CHARS,
   EMBEDDING_MODEL_ID,
   HYBRID_EMBEDDING_WEIGHT,
   HYBRID_SIMILARITY_FLOOR,
-} from "../../constants/retrieval.js";
+} from "../constants/retrieval.js";
 
 // ---- Named constants (no magic numbers) ----------------------------------
 //
@@ -51,7 +51,7 @@ export {
   EMBEDDING_MODEL_ID,
   HYBRID_EMBEDDING_WEIGHT,
   HYBRID_SIMILARITY_FLOOR,
-} from "../../constants/retrieval.js";
+} from "../constants/retrieval.js";
 
 /** Local alias kept for back-compat with this module's original name. */
 export const BODY_EXCERPT_CHARS = EMBED_BODY_EXCERPT_CHARS;
@@ -186,7 +186,7 @@ const NOOP_LOG: StructuredLog = () => {};
  *
  * Embeddings are cached per artifact, keyed by contentHash(artifactText):
  * corpus embeddings compute once per process and are reused across calls
- * and across kinds.  (src/server/cache/context-hash.ts hashes the full
+ * and across kinds.  (src/cache/context-hash.ts hashes the full
  * retrieval CONTEXT shape — wrong granularity here, so this module keeps
  * its own content-addressed map.)
  */

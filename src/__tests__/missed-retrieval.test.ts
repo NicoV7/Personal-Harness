@@ -14,9 +14,9 @@
 // (MissedRetrievalOptions.now) — no real timers, no wall-clock dependence.
 
 import { describe, test, expect } from "vitest";
-import { MissedRetrievalDetector } from "../server/audit/missed-retrieval.js";
-import type { ObserveCallInput } from "../server/audit/missed-retrieval.js";
-import type { AuditEvent } from "../server/audit/jsonl.js";
+import { MissedRetrievalDetector } from "../audit/missed-retrieval.js";
+import type { ObserveCallInput } from "../audit/missed-retrieval.js";
+import type { AuditEvent } from "../audit/jsonl.js";
 
 const RECENCY_MS = 60_000; // module default window
 const SESSION_GC_MS = 5 * 60_000; // module's sweep threshold

@@ -1,4 +1,4 @@
-// src/server/corpus/reader.ts
+// src/corpus/reader.ts
 //
 // Read frontmatter + body from rules/skills/memories markdown.
 //

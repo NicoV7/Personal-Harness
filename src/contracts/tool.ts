@@ -2,8 +2,8 @@
 //
 // SHARED CONTRACT — MCP tool surface (schema_version 1.5).
 //
-// Mirrors the LIVE shapes in src/server/main.ts (McpTool, ToolCallMeta)
-// and src/server/retrieve/index.ts (OrchestratorMeta). Drift guards at
+// Mirrors the LIVE shapes in src/app.ts (McpTool, ToolCallMeta)
+// and src/retrieval/index.ts (OrchestratorMeta). Drift guards at
 // the bottom fail `npm run typecheck` on any divergence.
 //
 // Standards that bind every tool implementation (see .betterai/rules/):
@@ -17,13 +17,13 @@
 import type { SubagentClass } from "./audit.js";
 import type { AssertTrue, MutuallyAssignable } from "./audit.js";
 
-// ToolContext stays defined in src/server/main.ts for now — it is the DI
+// ToolContext stays defined in src/app.ts for now — it is the DI
 // bag of concrete server classes (CorpusReader, ContextCache, ...), so it
 // gets contract-ified only when those classes grow interfaces in a later
 // wave. Re-exported type-only so contract consumers have a single import
 // surface today and the later flip is a one-line change.
-export type { ToolContext } from "../server/main.js";
-import type { ToolContext } from "../server/main.js";
+export type { ToolContext } from "../app.js";
+import type { ToolContext } from "../app.js";
 
 // ---- Per-call metadata ----------------------------------------------------
 
@@ -72,8 +72,8 @@ export interface McpTool<I = unknown, O = unknown> {
 import type {
   McpTool as LiveMcpTool,
   ToolCallMeta as LiveToolCallMeta,
-} from "../server/main.js";
-import type { OrchestratorMeta as LiveOrchestratorMeta } from "../server/retrieve/index.js";
+} from "../app.js";
+import type { OrchestratorMeta as LiveOrchestratorMeta } from "../retrieval/index.js";
 
 export type ToolContractDriftChecks = [
   AssertTrue<MutuallyAssignable<ToolCallMeta, LiveToolCallMeta>>,

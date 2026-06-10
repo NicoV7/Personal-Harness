@@ -1,4 +1,4 @@
-// src/server/retrieve/router.ts
+// src/retrieval/router.ts
 //
 // Parse `_meta/domain-router.yaml` and apply its rules to a retrieval
 // context.  Per the v4 design "Distributed Sub-Corpus Routing": we route

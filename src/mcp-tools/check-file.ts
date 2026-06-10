@@ -27,8 +27,8 @@ import type {
   McpTool,
   Rule,
   AuditEvent,
-} from '../server/main.js'
-import { CorpusReader } from '../server/corpus/reader.js'
+} from '../app.js'
+import { CorpusReader } from '../corpus/reader.js'
 import { ValidationError } from '../errors/index.js'
 
 const baseInputSchema = z.object({
