@@ -65,7 +65,7 @@ export function runGate(args: string[]): number {
   const events = readFileSync(auditPath, "utf8")
     .split("\n")
     .filter((l) => l.trim().length > 0)
-    .map((l) => safeParse(l))
+    .map((l: string) => safeParse(l))
     .filter((e): e is AuditEvent => e !== null)
     .filter((e) => Date.parse(e.ts) >= cutoff);
 
