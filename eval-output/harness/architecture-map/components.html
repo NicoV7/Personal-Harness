@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BetterAI — Components</title>
+  <meta name="description" content="Component reference for BetterAI: transport, connection limiter, LRU cache, retrieval orchestrator, repo-scope detection, markdown corpus reader, JSONL audit log, and CLI.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav" aria-label="Primary">
+      <a class="nav__brand" href="index.html">
+        <span class="nav__dot" aria-hidden="true"></span>
+        <span>BetterAI<span class="nav__sub">/ architecture</span></span>
+      </a>
+      <ul class="nav__links">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="index.html#flow">Request flow</a></li>
+        <li><a href="components.html" aria-current="page">Components</a></li>
+      </ul>
+      <a class="btn btn--pill" href="index.html">
+        <span>Back to map</span>
+        <span class="btn__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M11 6 5 12l6 6"/></svg>
+        </span>
+      </a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero hero--inner" aria-labelledby="ch">
+      <p class="eyebrow reveal">Component reference</p>
+      <h1 id="ch" class="hero__title reveal">Every box on the map, in plain language.</h1>
+      <p class="hero__lede reveal">
+        Each section below is one component from the request-flow diagram. The numbers
+        match the diagram stages so you can read the map and the prose side by side.
+      </p>
+    </section>
+
+    <div class="docs">
+      <nav class="docs__toc" aria-label="Components">
+        <p class="docs__toc-title">On this page</p>
+        <ol>
+          <li><a href="#transport">Transport</a></li>
+          <li><a href="#limiter">Connection limiter</a></li>
+          <li><a href="#cache">LRU cache</a></li>
+          <li><a href="#orchestrator">Retrieval orchestrator</a></li>
+          <li><a href="#scope">Repo-scope detection</a></li>
+          <li><a href="#corpus">Corpus reader</a></li>
+          <li><a href="#audit">JSONL audit log</a></li>
+          <li><a href="#cli">CLI</a></li>
+        </ol>
+      </nav>
+
+      <div class="docs__body">
+        <article id="transport" class="doc reveal" aria-labelledby="transport-h">
+          <p class="doc__n">Stage 1</p>
+          <h2 id="transport-h">HTTP + bearer MCP transport</h2>
+          <p>
+            The front door. BetterAI speaks the Model Context Protocol over a
+            streamable HTTP transport rather than stdio, so any networked agent can
+            reach it. Every inbound call must present a bearer token; authentication
+            runs before parsing or dispatch, so an unauthenticated request never
+            reaches the orchestrator or touches the corpus.
+          </p>
+          <p class="doc__io"><span>In</span> raw HTTP request &nbsp;·&nbsp; <span>Out</span> validated <code>retrieve_context</code> call</p>
+        </article>
+
+        <article id="limiter" class="doc reveal" aria-labelledby="limiter-h">
+          <p class="doc__n">Stage 2</p>
+          <h2 id="limiter-h">Connection limiter</h2>
+          <p>
+            A semaphore over in-flight retrievals. It caps concurrency so a sudden
+            burst of agents queues or backs off cleanly rather than oversubscribing
+            CPU and blowing latency for everyone. The cap is the difference between a
+            graceful slowdown and a thundering-herd collapse.
+          </p>
+          <p class="doc__io"><span>In</span> authenticated call &nbsp;·&nbsp; <span>Out</span> admitted call (or back-off)</p>
+        </article>
+
+        <article id="cache" class="doc reveal" aria-labelledby="cache-h">
+          <p class="doc__n">Stage 3</p>
+          <h2 id="cache-h">LRU cache</h2>
+          <p>
+            Before any scoring runs, the orchestrator checks an LRU cache keyed on a
+            hash of the task text plus the detected repo scope. Identical questions from
+            the same scope are common in an agent fleet, so a hit short-circuits the
+            whole pipeline and returns ranked context immediately. Entries carry a TTL
+            so corpus edits propagate without a restart.
+          </p>
+          <p class="doc__io"><span>In</span> task + scope key &nbsp;·&nbsp; <span>Out</span> cached context (hit) or miss</p>
+        </article>
+
+        <article id="orchestrator" class="doc reveal" aria-labelledby="orch-h">
+          <p class="doc__n">Stage 4 · core</p>
+          <h2 id="orch-h">Retrieval orchestrator</h2>
+          <p>
+            The heart of BetterAI. On a cache miss it runs two retrievers in parallel:
+            a <strong>grep pass</strong> for exact lexical matches (rule IDs, API names,
+            file globs) and a <strong>MiniLM embedding pass</strong> for semantic
+            similarity to the task. The two score sets are merged with a weighted
+            combination, deduplicated, and ranked; the orchestrator returns the top-k
+            documents. Hybrid scoring is deliberate — grep alone misses paraphrases,
+            embeddings alone miss precise identifiers.
+          </p>
+          <pre class="code" aria-label="Pseudocode for hybrid scoring"><code>lex   = grep(task, corpus)            // exact hits
+sem   = embed(task) · embed(corpus)  // MiniLM cosine
+score = w_lex * lex + w_sem * sem    // weighted merge
+return rank(score)[:k]</code></pre>
+          <p class="doc__io"><span>In</span> task + scope &nbsp;·&nbsp; <span>Out</span> ranked top-k rules / skills / memories</p>
+        </article>
+
+        <article id="scope" class="doc reveal" aria-labelledby="scope-h">
+          <p class="doc__n">Stage 5</p>
+          <h2 id="scope-h">Repo-scope detection</h2>
+          <p>
+            Inspects the calling repository — its languages, manifests, and layout — to
+            infer a domain scope (frontend, backend, infra, and so on). The scope narrows
+            the candidate set so a CSS task never gets database migration rules, and it
+            becomes part of the cache key. Cheap, deterministic, and high-leverage for
+            precision.
+          </p>
+          <p class="doc__io"><span>In</span> repo signals &nbsp;·&nbsp; <span>Out</span> scope label feeding the scorer + cache</p>
+        </article>
+
+        <article id="corpus" class="doc reveal" aria-labelledby="corpus-h">
+          <p class="doc__n">Stage 6</p>
+          <h2 id="corpus-h">Markdown corpus reader</h2>
+          <p>
+            The corpus is plain markdown — one file per rule, skill, or memory, with a
+            small typed header. The reader parses those files into scorable documents
+            (id, category, severity, body) that both retrievers consume. Authoring a new
+            rule is just dropping in a markdown file; no schema migration, no rebuild.
+          </p>
+          <p class="doc__io"><span>In</span> markdown files &nbsp;·&nbsp; <span>Out</span> parsed rule / skill / memory documents</p>
+        </article>
+
+        <article id="audit" class="doc reveal" aria-labelledby="audit-h">
+          <p class="doc__n">Stage 7</p>
+          <h2 id="audit-h">JSONL audit log</h2>
+          <p>
+            Every retrieval appends one JSON line: timestamp, query, detected scope,
+            matched IDs, and scores. Because it’s append-only JSONL it’s trivially
+            grep-able and replayable — you can prove what an agent was told and why, and
+            reconstruct any decision after the fact. It’s also how behavioral rules
+            (like “verify uncertain facts before deciding”) become observable.
+          </p>
+          <pre class="code" aria-label="Example audit line"><code>{"ts":"2026-06-10T12:01:44Z","scope":"frontend",
+ "query":"portfolio page accessibility",
+ "matched":["alt-text-required","no-inline-styles",
+            "responsive-viewport-meta"],"k":4}</code></pre>
+          <p class="doc__io"><span>In</span> retrieval result &nbsp;·&nbsp; <span>Out</span> one appended JSONL record</p>
+        </article>
+
+        <article id="cli" class="doc reveal" aria-labelledby="cli-h">
+          <p class="doc__n">Out of band</p>
+          <h2 id="cli-h">CLI</h2>
+          <p>
+            A thin command-line front end over the same orchestrator. It lets an engineer
+            run a retrieval locally — to debug scoring, preview what an agent would get,
+            or author and test corpus rules — without standing up an MCP client. Same code
+            path as the server, so what you see in the terminal is what the fleet sees on
+            the wire.
+          </p>
+          <pre class="code" aria-label="Example CLI invocation"><code>$ betterai retrieve "build a portfolio page" --repo ./site
+→ matched: alt-text-required, no-inline-styles,
+           responsive-viewport-meta  (scope: frontend)</code></pre>
+        </article>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>BetterAI architecture map — static, hand-built, no framework.</p>
+    <p class="site-footer__note">© 2026 · MCP rule-retrieval server</p>
+  </footer>
+
+  <script src="reveal.js" defer></script>
+</body>
+</html>

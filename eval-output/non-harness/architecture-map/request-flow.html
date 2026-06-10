@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BetterAI — retrieve_context request flow</title>
+  <meta name="description" content="Step-by-step flow of a retrieve_context request through BetterAI, from agent call to ranked response." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html">BetterAI<span>/arch</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="components.html">Components</a></li>
+        <li><a href="request-flow.html" class="active">Request flow</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section class="intro slim">
+      <div class="wrap">
+        <p class="eyebrow">Walkthrough</p>
+        <h1>A <code>retrieve_context</code> request, step by step</h1>
+        <p class="lede">Follow one query from the agent's call all the way to the ranked response.</p>
+      </div>
+    </section>
+
+    <div class="wrap flow">
+      <ol class="steps">
+        <li>
+          <span class="step-n">1</span>
+          <div>
+            <h3>Agent calls the tool</h3>
+            <p>A coding agent (or the CLI) invokes <code>retrieve_context</code> with a query string over the
+            HTTP MCP transport, carrying its bearer token.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">2</span>
+          <div>
+            <h3>Authenticate &amp; admit</h3>
+            <p>The transport verifies the bearer token. The connection limiter checks in-flight capacity and
+            admits the request, or sheds/queues it if the system is saturated.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">3</span>
+          <div>
+            <h3>Resolve repo scope</h3>
+            <p>The orchestrator detects which repository the request belongs to so retrieval can be narrowed
+            to relevant rules and memories.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">4</span>
+          <div>
+            <h3>Check the LRU cache</h3>
+            <p>The orchestrator looks up the normalized query + scope. <strong>On a hit</strong>, it returns the
+            cached ranked result immediately and skips to step 7.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">5</span>
+          <div>
+            <h3>Read corpus &amp; score (cache miss)</h3>
+            <p>The markdown corpus reader supplies candidate documents. The hybrid scorer runs a grep lexical
+            pass and a MiniLM embedding pass, then merges them into one normalized ranking.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">6</span>
+          <div>
+            <h3>Cache the result</h3>
+            <p>The freshly ranked result is written back into the LRU cache (evicting the oldest entry if full)
+            so identical follow-up queries are cheap.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">7</span>
+          <div>
+            <h3>Write the audit record</h3>
+            <p>The orchestrator appends a JSONL line: the query, matched documents, scores, cache hit/miss, and
+            latency — a complete, replayable record.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">8</span>
+          <div>
+            <h3>Respond to the agent</h3>
+            <p>The ranked rules, skills, and memories travel back out through the transport to the agent as the
+            tool result.</p>
+          </div>
+        </li>
+      </ol>
+
+      <aside class="flow-note">
+        <h3>Two paths, one shape</h3>
+        <p>The <strong>cache hit</strong> path (steps 1-4, 7-8) and the <strong>cache miss</strong> path
+        (all 8 steps) differ only in whether scoring runs. Both are authenticated, scoped, and audited —
+        nothing returns to the agent without a log line.</p>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap"><p>BetterAI architecture map — plain HTML + CSS, no build step.</p></div>
+  </footer>
+</body>
+</html>

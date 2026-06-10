@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nico Vega — AI / Infrastructure Engineer</title>
+  <meta name="description" content="Nico Vega builds the infrastructure that AI agents run on — retrieval systems, MCP servers, and the plumbing that keeps fleets of agents fast and honest.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav" aria-label="Primary">
+      <a class="nav__brand" href="#top">
+        <span class="nav__mark" aria-hidden="true">NV</span>
+        <span class="nav__name">Nico Vega</span>
+      </a>
+      <ul class="nav__links">
+        <li><a href="#about">About</a></li>
+        <li><a href="#work">Work</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+      <a class="btn btn--pill" href="#contact">
+        <span>Get in touch</span>
+        <span class="btn__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+        </span>
+      </a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-heading">
+      <p class="eyebrow reveal">AI · Infrastructure · Retrieval</p>
+      <h1 id="hero-heading" class="hero__title reveal">
+        I build the <em>infrastructure</em> that AI agents actually run on.
+      </h1>
+      <p class="hero__lede reveal">
+        I’m Nico Vega — an infrastructure engineer working at the seam between
+        model behavior and production systems. Lately that means MCP servers,
+        hybrid retrieval, and the unglamorous plumbing that keeps a fleet of
+        agents fast, observable, and honest.
+      </p>
+      <div class="hero__actions reveal">
+        <a class="btn btn--pill btn--primary" href="#work">
+          <span>See selected work</span>
+          <span class="btn__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+          </span>
+        </a>
+        <a class="btn btn--ghost" href="#about">A bit about me</a>
+      </div>
+
+      <dl class="hero__stats reveal">
+        <div class="stat">
+          <dt>p95 retrieval latency</dt>
+          <dd>38<span>ms</span></dd>
+        </div>
+        <div class="stat">
+          <dt>agents in fleet</dt>
+          <dd>40<span>+</span></dd>
+        </div>
+        <div class="stat">
+          <dt>years shipping infra</dt>
+          <dd>8</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section id="about" class="about" aria-labelledby="about-heading">
+      <div class="section-head">
+        <p class="eyebrow">About</p>
+        <h2 id="about-heading" class="section-title">
+          Systems that stay calm under load — and under scrutiny.
+        </h2>
+      </div>
+      <div class="about__grid">
+        <figure class="about__portrait">
+          <img class="about__img"
+               src="data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='600'%20height='720'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%23e9e6df'/%3E%3Cstop%20offset='1'%20stop-color='%23cfd6cf'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='600'%20height='720'%20fill='url(%23g)'/%3E%3Ccircle%20cx='300'%20cy='270'%20r='120'%20fill='%23b7c2b4'/%3E%3Crect%20x='150'%20y='430'%20width='300'%20height='220'%20rx='150'%20fill='%23b7c2b4'/%3E%3C/svg%3E"
+               alt="Stylized illustrated portrait of Nico Vega in muted sage tones"
+               width="600" height="720">
+          <figcaption>Nico Vega — currently in Buenos Aires.</figcaption>
+        </figure>
+        <div class="about__body">
+          <p>
+            I started in distributed systems — queues, caches, and the kind of
+            connection-limiting that decides whether a Tuesday is quiet or a pager
+            storm. When LLM tooling arrived, I found the same problems wearing new
+            clothes: retrieval is search, an MCP server is just a daemon with a
+            bearer token, and an agent fleet is a thread pool that occasionally
+            argues with you.
+          </p>
+          <p>
+            My bias is toward boring, legible infrastructure: explicit transports,
+            audit logs you can <code>grep</code>, scoring you can explain in one
+            sentence, and caches that admit when they’re cold. I’d rather ship a
+            38ms hybrid retriever I can reason about than a magic black box that
+            wins a benchmark and loses on-call.
+          </p>
+          <ul class="chips" aria-label="Areas of focus">
+            <li>MCP &amp; agent transports</li>
+            <li>Hybrid retrieval</li>
+            <li>Embeddings (MiniLM)</li>
+            <li>Observability</li>
+            <li>TypeScript / Rust</li>
+            <li>Docker</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="work" class="work" aria-labelledby="work-heading">
+      <div class="section-head">
+        <p class="eyebrow">Selected work</p>
+        <h2 id="work-heading" class="section-title">
+          Three things I built and would build again.
+        </h2>
+      </div>
+
+      <ul class="cards" role="list">
+        <li class="card">
+          <article class="card__inner">
+            <p class="card__index">01</p>
+            <h3 class="card__title">BetterAI</h3>
+            <p class="card__role">MCP rule-retrieval server · Lead engineer</p>
+            <p class="card__desc">
+              A Dockerized MCP server that hands coding agents the right rules at
+              the right moment. Grep + MiniLM-embedding hybrid scoring over a
+              markdown corpus, an LRU cache and connection limiter in front, a
+              JSONL audit log behind, and repo-scope detection so a frontend repo
+              never gets backend rules. p95 sits at 38ms warm.
+            </p>
+            <p class="card__stack">HTTP+bearer MCP · TypeScript · MiniLM · Docker</p>
+          </article>
+        </li>
+
+        <li class="card">
+          <article class="card__inner">
+            <p class="card__index">02</p>
+            <h3 class="card__title">Driftwatch</h3>
+            <p class="card__role">Embedding-drift monitor · Creator</p>
+            <p class="card__desc">
+              A sidecar that watches production embedding distributions and fires
+              when the index quietly goes stale — the failure mode nobody alerts on.
+              It re-embeds a rolling sample, tracks cosine drift against a frozen
+              baseline, and opens a PR with the offending documents attached so the
+              fix is one click, not one investigation.
+            </p>
+            <p class="card__stack">Python · pgvector · GitHub Actions</p>
+          </article>
+        </li>
+
+        <li class="card">
+          <article class="card__inner">
+            <p class="card__index">03</p>
+            <h3 class="card__title">Lanternd</h3>
+            <p class="card__role">Agent fleet scheduler · Creator</p>
+            <p class="card__desc">
+              A scheduler for running dozens of coding agents in parallel without
+              them trampling each other. Per-repo worktree leases, a token-budget
+              governor, and a connection limiter that backs off cleanly instead of
+              thrashing. It turned “spawn 40 agents and pray” into a load I can
+              actually reason about on a graph.
+            </p>
+            <p class="card__stack">Rust · tokio · SQLite · Prometheus</p>
+          </article>
+        </li>
+      </ul>
+    </section>
+
+    <section id="contact" class="contact" aria-labelledby="contact-heading">
+      <div class="contact__panel">
+        <div class="contact__inner">
+          <p class="eyebrow">Contact</p>
+          <h2 id="contact-heading" class="contact__title">
+            Have a retrieval pipeline that’s slow, flaky, or unexplainable?
+          </h2>
+          <p class="contact__lede">
+            That’s my favorite kind of email. I take on a small number of infra
+            engagements and the occasional advisory call. Tell me what’s on fire.
+          </p>
+          <div class="contact__actions">
+            <a class="btn btn--pill btn--primary" href="mailto:nico@nicovega.dev">
+              <span>nico@nicovega.dev</span>
+              <span class="btn__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg>
+              </span>
+            </a>
+            <a class="btn btn--ghost" href="https://github.com/nicovega" rel="me noopener">GitHub</a>
+            <a class="btn btn--ghost" href="https://www.linkedin.com/in/nicovega" rel="me noopener">LinkedIn</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>© 2026 Nico Vega — built by hand, no framework, opens straight in a browser.</p>
+    <p class="site-footer__note">Buenos Aires · UTC−3</p>
+  </footer>
+
+  <script src="reveal.js" defer></script>
+</body>
+</html>

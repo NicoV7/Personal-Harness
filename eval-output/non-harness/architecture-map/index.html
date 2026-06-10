@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BetterAI — System Architecture Map</title>
+  <meta name="description" content="Architecture map of BetterAI, a Dockerized MCP rule-retrieval server: transport, retrieval orchestrator, hybrid scoring, corpus reader, cache, audit log, and CLI." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html">BetterAI<span>/arch</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="active">Overview</a></li>
+        <li><a href="components.html">Components</a></li>
+        <li><a href="request-flow.html">Request flow</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div class="wrap">
+        <p class="eyebrow">System Architecture Map</p>
+        <h1>BetterAI</h1>
+        <p class="lede">
+          A Dockerized <strong>MCP rule-retrieval server</strong>. It exposes a single
+          <code>retrieve_context</code> tool over an HTTP + bearer MCP transport, then ranks rules,
+          skills, and memories from a markdown corpus using hybrid grep + MiniLM-embedding scoring —
+          fronted by an LRU cache and connection limiter, recorded in a JSONL audit log, and scoped
+          to the calling repository.
+        </p>
+      </div>
+    </section>
+
+    <section class="wrap diagram-section">
+      <h2>Component map</h2>
+      <p class="muted">
+        How a request travels: an agent calls the MCP tool, the request is authenticated and limited,
+        the orchestrator checks cache then scores the corpus, and the result is logged before it returns.
+      </p>
+
+      <!-- INLINE SVG DIAGRAM -->
+      <div class="diagram" role="img" aria-label="BetterAI component diagram showing request flow from agent through transport, connection limiter, retrieval orchestrator, cache, scorer, corpus reader, and audit log.">
+        <svg viewBox="0 0 920 620" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#7aa2ff" />
+            </marker>
+            <marker id="arrowback" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#6ce0c4" />
+            </marker>
+          </defs>
+
+          <!-- Agent / CLI client -->
+          <g class="node node-client">
+            <rect x="40" y="40" width="180" height="74" rx="12" />
+            <text x="130" y="72">Coding Agent / CLI</text>
+            <text x="130" y="94" class="sub">MCP client</text>
+          </g>
+
+          <!-- Transport -->
+          <g class="node node-edge">
+            <rect x="370" y="40" width="200" height="74" rx="12" />
+            <text x="470" y="72">HTTP + Bearer</text>
+            <text x="470" y="94" class="sub">MCP transport</text>
+          </g>
+
+          <!-- Connection limiter -->
+          <g class="node node-edge">
+            <rect x="700" y="40" width="180" height="74" rx="12" />
+            <text x="790" y="72">Connection</text>
+            <text x="790" y="94" class="sub">limiter</text>
+          </g>
+
+          <!-- Repo scope -->
+          <g class="node node-edge">
+            <rect x="700" y="200" width="180" height="74" rx="12" />
+            <text x="790" y="232">Repo-scope</text>
+            <text x="790" y="254" class="sub">detection</text>
+          </g>
+
+          <!-- Orchestrator -->
+          <g class="node node-core">
+            <rect x="360" y="190" width="220" height="94" rx="12" />
+            <text x="470" y="226">Retrieval</text>
+            <text x="470" y="250">Orchestrator</text>
+            <text x="470" y="272" class="sub">retrieve_context</text>
+          </g>
+
+          <!-- LRU cache -->
+          <g class="node node-store">
+            <rect x="80" y="200" width="180" height="74" rx="12" />
+            <text x="170" y="232">LRU Cache</text>
+            <text x="170" y="254" class="sub">query → result</text>
+          </g>
+
+          <!-- Scorer -->
+          <g class="node node-core">
+            <rect x="360" y="360" width="220" height="94" rx="12" />
+            <text x="470" y="396">Hybrid Scorer</text>
+            <text x="470" y="420" class="sub">grep + MiniLM</text>
+            <text x="470" y="440" class="sub">embeddings</text>
+          </g>
+
+          <!-- Corpus reader -->
+          <g class="node node-store">
+            <rect x="360" y="520" width="220" height="74" rx="12" />
+            <text x="470" y="552">Markdown Corpus Reader</text>
+            <text x="470" y="574" class="sub">rules · skills · memories</text>
+          </g>
+
+          <!-- Audit log -->
+          <g class="node node-store">
+            <rect x="700" y="360" width="180" height="94" rx="12" />
+            <text x="790" y="396">JSONL</text>
+            <text x="790" y="420" class="sub">audit log</text>
+            <text x="790" y="440" class="sub">append-only</text>
+          </g>
+
+          <!-- EDGES -->
+          <!-- client -> transport -->
+          <line class="edge" x1="220" y1="77" x2="368" y2="77" marker-end="url(#arrow)" />
+          <!-- transport -> limiter -->
+          <line class="edge" x1="570" y1="77" x2="698" y2="77" marker-end="url(#arrow)" />
+          <!-- limiter -> orchestrator -->
+          <path class="edge" d="M790,114 L790,160 L470,160 L470,188" fill="none" marker-end="url(#arrow)" />
+          <!-- orchestrator -> cache -->
+          <line class="edge" x1="358" y1="237" x2="262" y2="237" marker-end="url(#arrow)" />
+          <!-- cache -> orchestrator (return) -->
+          <path class="edge return" d="M262,255 L310,255 L310,265 L358,265" fill="none" marker-end="url(#arrowback)" />
+          <!-- orchestrator -> repo scope -->
+          <line class="edge" x1="580" y1="237" x2="698" y2="237" marker-end="url(#arrow)" />
+          <!-- orchestrator -> scorer -->
+          <line class="edge" x1="470" y1="284" x2="470" y2="358" marker-end="url(#arrow)" />
+          <!-- scorer -> corpus -->
+          <line class="edge" x1="470" y1="454" x2="470" y2="518" marker-end="url(#arrow)" />
+          <!-- scorer -> audit -->
+          <line class="edge" x1="580" y1="407" x2="698" y2="407" marker-end="url(#arrow)" />
+          <!-- orchestrator -> client return (long path) -->
+          <path class="edge return" d="M360,210 L130,210 L130,116" fill="none" marker-end="url(#arrowback)" />
+        </svg>
+      </div>
+
+      <ul class="legend">
+        <li><span class="dot dot-client"></span> Client / entrypoint</li>
+        <li><span class="dot dot-edge"></span> Edge &amp; safety</li>
+        <li><span class="dot dot-core"></span> Core retrieval</li>
+        <li><span class="dot dot-store"></span> Storage &amp; I/O</li>
+        <li><span class="dot dot-blue"></span> Request path</li>
+        <li><span class="dot dot-green"></span> Response path</li>
+      </ul>
+    </section>
+
+    <section class="wrap cards-section">
+      <h2>The pieces at a glance</h2>
+      <div class="card-grid">
+        <a class="card" href="components.html#transport">
+          <h3>HTTP + Bearer transport</h3>
+          <p>MCP over HTTP with bearer-token auth. The single front door for every request.</p>
+        </a>
+        <a class="card" href="components.html#orchestrator">
+          <h3>Retrieval orchestrator</h3>
+          <p>Coordinates cache, scope, scoring, and audit to answer <code>retrieve_context</code>.</p>
+        </a>
+        <a class="card" href="components.html#scorer">
+          <h3>Hybrid scorer</h3>
+          <p>Combines grep lexical hits with MiniLM embedding similarity into one ranked list.</p>
+        </a>
+        <a class="card" href="components.html#corpus">
+          <h3>Markdown corpus reader</h3>
+          <p>Loads rules, skills, and memories from markdown into a queryable document set.</p>
+        </a>
+        <a class="card" href="components.html#cache">
+          <h3>LRU cache + limiter</h3>
+          <p>Caches query results and sheds load before the embedding model saturates.</p>
+        </a>
+        <a class="card" href="components.html#audit">
+          <h3>JSONL audit log</h3>
+          <p>Append-only record of every query, its matches, scores, and latency.</p>
+        </a>
+        <a class="card" href="components.html#scope">
+          <h3>Repo-scope detection</h3>
+          <p>Restricts results to rules relevant to the calling repository.</p>
+        </a>
+        <a class="card" href="components.html#cli">
+          <h3>CLI</h3>
+          <p>Local entrypoint to run the server and query the corpus without an agent.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>BetterAI architecture map — plain HTML + CSS, no build step.</p>
+    </div>
+  </footer>
+</body>
+</html>

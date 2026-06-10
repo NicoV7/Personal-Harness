@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BetterAI — Components</title>
+  <meta name="description" content="Detailed description of each BetterAI component: transport, orchestrator, scorer, corpus reader, cache, limiter, audit log, repo-scope detection, and CLI." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html">BetterAI<span>/arch</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="components.html" class="active">Components</a></li>
+        <li><a href="request-flow.html">Request flow</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section class="intro slim">
+      <div class="wrap">
+        <p class="eyebrow">Reference</p>
+        <h1>Components</h1>
+        <p class="lede">Each part of BetterAI, what it does, and how it connects to the rest of the system.</p>
+      </div>
+    </section>
+
+    <div class="wrap doc">
+      <article id="transport" class="comp">
+        <span class="tag tag-edge">Edge &amp; safety</span>
+        <h2>HTTP + Bearer MCP transport</h2>
+        <p>
+          The transport speaks the Model Context Protocol over HTTP. Every request must carry a valid
+          bearer token; unauthenticated calls are rejected before they reach any retrieval logic. It
+          exposes one tool to clients — <code>retrieve_context</code> — and is the only network surface
+          the server presents.
+        </p>
+        <ul class="kv">
+          <li><span>Inbound from</span> Coding agents and the CLI</li>
+          <li><span>Hands off to</span> Connection limiter, then the orchestrator</li>
+          <li><span>Auth</span> Bearer token on every request</li>
+        </ul>
+      </article>
+
+      <article id="limiter" class="comp">
+        <span class="tag tag-edge">Edge &amp; safety</span>
+        <h2>Connection limiter</h2>
+        <p>
+          A concurrency gate that caps how many retrievals run at once. Because the embedding model is
+          the most expensive resource in the system, the limiter sheds or queues excess load so latency
+          stays predictable under bursty agent traffic rather than collapsing.
+        </p>
+        <ul class="kv">
+          <li><span>Protects</span> The MiniLM embedding step</li>
+          <li><span>Behavior</span> Bounds in-flight requests; rejects/queues overflow</li>
+        </ul>
+      </article>
+
+      <article id="orchestrator" class="comp">
+        <span class="tag tag-core">Core retrieval</span>
+        <h2>Retrieval orchestrator</h2>
+        <p>
+          The brain of the server and the implementation behind <code>retrieve_context</code>. For each
+          query it: checks the LRU cache, applies repo-scope detection, invokes the hybrid scorer over the
+          corpus, assembles the ranked result, and writes an audit record. It is the only component that
+          talks to all the others.
+        </p>
+        <ul class="kv">
+          <li><span>Reads</span> LRU cache, repo scope, scored corpus documents</li>
+          <li><span>Writes</span> JSONL audit log, LRU cache (on miss)</li>
+          <li><span>Returns</span> Ranked rules / skills / memories to the transport</li>
+        </ul>
+      </article>
+
+      <article id="scorer" class="comp">
+        <span class="tag tag-core">Core retrieval</span>
+        <h2>Hybrid scorer (grep + MiniLM)</h2>
+        <p>
+          Combines two complementary signals. A <strong>grep pass</strong> finds exact and substring lexical
+          matches — high precision, great for identifiers and verbatim phrases. A <strong>MiniLM embedding
+          pass</strong> finds semantic neighbors — high recall, great for paraphrases. The two scores are
+          normalized and merged into a single ranking, with weighting tuned so short, specific queries lean
+          lexical and broad queries lean semantic.
+        </p>
+        <ul class="kv">
+          <li><span>Inputs</span> Query text + candidate documents from the corpus</li>
+          <li><span>Signals</span> Lexical (grep) + semantic (MiniLM embeddings)</li>
+          <li><span>Output</span> A single normalized, ranked list</li>
+        </ul>
+      </article>
+
+      <article id="corpus" class="comp">
+        <span class="tag tag-store">Storage &amp; I/O</span>
+        <h2>Markdown corpus reader</h2>
+        <p>
+          Loads the knowledge base from markdown files on disk and turns it into a set of queryable
+          documents. The corpus is organized into three kinds of entries — <strong>rules</strong> (how to
+          behave), <strong>skills</strong> (how to do things), and <strong>memories</strong> (what happened
+          before). The reader handles parsing, front-matter, and presenting clean text to the scorer.
+        </p>
+        <ul class="kv">
+          <li><span>Source</span> Markdown files (rules, skills, memories)</li>
+          <li><span>Consumed by</span> The hybrid scorer</li>
+        </ul>
+      </article>
+
+      <article id="cache" class="comp">
+        <span class="tag tag-store">Storage &amp; I/O</span>
+        <h2>LRU cache</h2>
+        <p>
+          A least-recently-used cache keyed by the normalized query (and scope). On a hit, the orchestrator
+          returns the prior result without re-running grep or the embedding model — the cheapest possible
+          path. On a miss, the freshly scored result is written back and the oldest entry is evicted.
+        </p>
+        <ul class="kv">
+          <li><span>Key</span> Normalized query + repo scope</li>
+          <li><span>Eviction</span> Least-recently-used</li>
+        </ul>
+      </article>
+
+      <article id="audit" class="comp">
+        <span class="tag tag-store">Storage &amp; I/O</span>
+        <h2>JSONL audit log</h2>
+        <p>
+          An append-only log with one JSON object per line per request. Each record captures the query,
+          the documents that matched, their scores, whether the cache was hit, and the latency. This makes
+          retrievals fully replayable — you can answer "exactly what context did the agent receive?" long
+          after the fact.
+        </p>
+        <ul class="kv">
+          <li><span>Format</span> JSON Lines, append-only</li>
+          <li><span>Captures</span> Query, matches, scores, cache hit/miss, latency</li>
+        </ul>
+      </article>
+
+      <article id="scope" class="comp">
+        <span class="tag tag-edge">Edge &amp; safety</span>
+        <h2>Repo-scope detection</h2>
+        <p>
+          Determines which repository the request is associated with and constrains retrieval to rules and
+          memories relevant to that repo. This keeps an agent working in one project from being handed
+          context that only applies to another.
+        </p>
+        <ul class="kv">
+          <li><span>Effect</span> Filters corpus candidates by repository</li>
+          <li><span>Used by</span> The orchestrator before scoring</li>
+        </ul>
+      </article>
+
+      <article id="cli" class="comp">
+        <span class="tag tag-client">Client / entrypoint</span>
+        <h2>CLI</h2>
+        <p>
+          A command-line entrypoint for running the server in Docker and for querying the corpus directly
+          without going through an agent. Handy for debugging the scorer, seeding the cache, or inspecting
+          what a given query would return.
+        </p>
+        <ul class="kv">
+          <li><span>Uses</span> Same orchestrator path as the MCP transport</li>
+          <li><span>For</span> Local runs, debugging, manual queries</li>
+        </ul>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap"><p>BetterAI architecture map — plain HTML + CSS, no build step.</p></div>
+  </footer>
+</body>
+</html>

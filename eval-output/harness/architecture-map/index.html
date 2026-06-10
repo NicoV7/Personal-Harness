@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BetterAI — System Architecture Map</title>
+  <meta name="description" content="Architecture map for BetterAI: a Dockerized MCP rule-retrieval server. How a retrieve_context request flows through transport, orchestrator, corpus reader, cache, limiter, and audit log.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav" aria-label="Primary">
+      <a class="nav__brand" href="index.html">
+        <span class="nav__dot" aria-hidden="true"></span>
+        <span>BetterAI<span class="nav__sub">/ architecture</span></span>
+      </a>
+      <ul class="nav__links">
+        <li><a href="index.html" aria-current="page">Overview</a></li>
+        <li><a href="#flow">Request flow</a></li>
+        <li><a href="components.html">Components</a></li>
+      </ul>
+      <a class="btn btn--pill" href="components.html">
+        <span>Components</span>
+        <span class="btn__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        </span>
+      </a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-heading">
+      <p class="eyebrow reveal">MCP · Retrieval · Docker</p>
+      <h1 id="hero-heading" class="hero__title reveal">
+        BetterAI is a rule-retrieval server for coding agents.
+      </h1>
+      <p class="hero__lede reveal">
+        One MCP tool — <code>retrieve_context</code> — takes a task description and
+        returns the handful of rules, skills, and memories that matter, scored by a
+        grep + MiniLM-embedding hybrid. This map shows every component and traces a
+        single request from the wire to the audit log.
+      </p>
+      <div class="hero__chips reveal">
+        <span class="tag">HTTP + bearer transport</span>
+        <span class="tag">Hybrid scorer</span>
+        <span class="tag">Markdown corpus</span>
+        <span class="tag">LRU cache</span>
+        <span class="tag">Connection limiter</span>
+        <span class="tag">JSONL audit</span>
+        <span class="tag">Repo-scope detection</span>
+        <span class="tag">CLI</span>
+      </div>
+    </section>
+
+    <section id="flow" class="flow" aria-labelledby="flow-heading">
+      <div class="section-head">
+        <p class="eyebrow">Request flow</p>
+        <h2 id="flow-heading" class="section-title">
+          One <code>retrieve_context</code> call, end to end.
+        </h2>
+        <p class="section-lede">
+          Solid arrows are the hot path of a single request. Read it top to bottom —
+          each numbered stage maps to a component documented on the
+          <a class="inline-link" href="components.html">components page</a>.
+        </p>
+      </div>
+
+      <figure class="diagram">
+        <svg class="diagram__svg" viewBox="0 0 900 760" role="img"
+             aria-labelledby="diagram-title diagram-desc" preserveAspectRatio="xMidYMid meet">
+          <title id="diagram-title">retrieve_context request-flow diagram</title>
+          <desc id="diagram-desc">
+            A coding agent sends an MCP retrieve_context call over an HTTP plus bearer
+            transport. A connection limiter admits the request, then a cache lookup is
+            attempted. On a cache hit the response returns immediately. On a miss, the
+            retrieval orchestrator detects the repo scope, asks the markdown corpus
+            reader for candidate rules, skills, and memories, scores them with grep and
+            MiniLM embeddings, fills the cache, and writes a JSONL audit entry before
+            returning the ranked context to the agent.
+          </desc>
+
+          <defs>
+            <linearGradient id="boxFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#13161d"/>
+              <stop offset="1" stop-color="#0c0e14"/>
+            </linearGradient>
+            <linearGradient id="accentFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#1d2740"/>
+              <stop offset="1" stop-color="#141b2d"/>
+            </linearGradient>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#6b78c9"/>
+            </marker>
+            <marker id="arrowDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#5b6170"/>
+            </marker>
+          </defs>
+
+          <!-- edges (drawn first, under the nodes) -->
+          <g class="edges" fill="none" stroke="#6b78c9" stroke-width="2" marker-end="url(#arrow)">
+            <path d="M450 92 L450 132"/>            <!-- agent -> transport -->
+            <path d="M450 200 L450 240"/>           <!-- transport -> limiter -->
+            <path d="M450 308 L450 348"/>           <!-- limiter -> cache -->
+            <path d="M450 416 L450 456"/>           <!-- cache miss -> orchestrator -->
+            <path d="M335 540 L250 540 L250 600"/>  <!-- orchestrator -> scope -->
+            <path d="M565 540 L650 540 L650 600"/>  <!-- orchestrator -> corpus -->
+          </g>
+          <g class="edges-dim" fill="none" stroke="#5b6170" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arrowDim)">
+            <path d="M558 382 L820 382 L820 60 L478 60"/>   <!-- cache hit -> back to agent -->
+            <path d="M250 660 L250 700 L450 700 L450 596"/> <!-- scope back to orchestrator -->
+            <path d="M650 660 L650 700 L452 700"/>          <!-- corpus back to orchestrator -->
+            <path d="M342 510 L70 510 L70 60 L422 60"/>     <!-- orchestrator result -> agent -->
+          </g>
+          <g class="edge-labels">
+            <text x="470" y="338" class="elab">admitted</text>
+            <text x="470" y="446" class="elab">miss</text>
+            <text x="828" y="220" class="elab elab--dim">hit → return</text>
+            <text x="60" y="290" class="elab elab--dim">ranked context → agent</text>
+          </g>
+
+          <!-- nodes -->
+          <g class="node">
+            <rect x="330" y="44" width="240" height="48" rx="14" fill="url(#accentFill)" stroke="#2f3a5c"/>
+            <text x="450" y="68" class="n-title">Coding agent (MCP client)</text>
+            <text x="450" y="84" class="n-sub">retrieve_context(task, repo)</text>
+          </g>
+
+          <g class="node">
+            <rect x="312" y="132" width="276" height="68" rx="16" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="324" y="158" class="n-num">1</text>
+            <text x="450" y="160" class="n-title">HTTP + bearer transport</text>
+            <text x="450" y="180" class="n-sub">StreamableHTTP · auth on every call</text>
+          </g>
+
+          <g class="node">
+            <rect x="312" y="240" width="276" height="68" rx="16" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="324" y="266" class="n-num">2</text>
+            <text x="450" y="268" class="n-title">Connection limiter</text>
+            <text x="450" y="288" class="n-sub">bounded concurrency · clean back-off</text>
+          </g>
+
+          <g class="node">
+            <rect x="312" y="348" width="276" height="68" rx="16" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="324" y="374" class="n-num">3</text>
+            <text x="450" y="376" class="n-title">LRU cache</text>
+            <text x="450" y="396" class="n-sub">key = hash(task + scope) · TTL</text>
+          </g>
+
+          <g class="node">
+            <rect x="335" y="456" width="230" height="84" rx="16" fill="url(#accentFill)" stroke="#2f3a5c"/>
+            <text x="347" y="482" class="n-num">4</text>
+            <text x="450" y="486" class="n-title">Retrieval orchestrator</text>
+            <text x="450" y="506" class="n-sub">grep + MiniLM hybrid scoring</text>
+            <text x="450" y="524" class="n-sub">merge · rank · top-k</text>
+          </g>
+
+          <g class="node">
+            <rect x="150" y="600" width="200" height="60" rx="16" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="162" y="626" class="n-num">5</text>
+            <text x="250" y="628" class="n-title">Repo-scope detection</text>
+            <text x="250" y="646" class="n-sub">frontend vs backend, etc.</text>
+          </g>
+
+          <g class="node">
+            <rect x="550" y="600" width="200" height="60" rx="16" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="562" y="626" class="n-num">6</text>
+            <text x="650" y="628" class="n-title">Markdown corpus reader</text>
+            <text x="650" y="646" class="n-sub">rules · skills · memories</text>
+          </g>
+
+          <g class="node">
+            <rect x="330" y="712" width="240" height="40" rx="13" fill="url(#boxFill)" stroke="#283042"/>
+            <text x="342" y="736" class="n-num">7</text>
+            <text x="450" y="737" class="n-title">JSONL audit log (append-only)</text>
+          </g>
+        </svg>
+        <figcaption class="diagram__cap">
+          Hot path (solid) and return / lookup paths (dashed). The CLI (not shown)
+          drives the same orchestrator out of band for local inspection.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="legend" aria-labelledby="legend-heading">
+      <div class="section-head">
+        <p class="eyebrow">At a glance</p>
+        <h2 id="legend-heading" class="section-title">The seven components</h2>
+      </div>
+      <ul class="grid" role="list">
+        <li class="cell"><span class="cell__n">01</span><h3>HTTP + bearer transport</h3><p>Streamable HTTP MCP transport. Every request carries a bearer token, checked before any work happens.</p></li>
+        <li class="cell"><span class="cell__n">02</span><h3>Connection limiter</h3><p>Bounds in-flight requests so a burst degrades gracefully instead of exhausting the box.</p></li>
+        <li class="cell"><span class="cell__n">03</span><h3>LRU cache</h3><p>Keyed on task + repo scope. A hit returns ranked context without touching disk or the model.</p></li>
+        <li class="cell cell--wide"><span class="cell__n">04</span><h3>Retrieval orchestrator</h3><p>The core. Runs grep over the corpus for lexical hits, MiniLM embeddings for semantic ones, then merges, ranks, and returns top-k.</p></li>
+        <li class="cell"><span class="cell__n">05</span><h3>Repo-scope detection</h3><p>Infers the repo’s domain so a frontend task never gets backend-only rules.</p></li>
+        <li class="cell"><span class="cell__n">06</span><h3>Markdown corpus reader</h3><p>Parses rule, skill, and memory markdown into scorable, retrievable documents.</p></li>
+        <li class="cell"><span class="cell__n">07</span><h3>JSONL audit log</h3><p>Append-only record of every retrieval: query, scope, matches, scores — grep-friendly and replayable.</p></li>
+        <li class="cell"><span class="cell__n">08</span><h3>CLI</h3><p>Drives the orchestrator from a terminal for local debugging and corpus authoring — same code path, no MCP client needed.</p></li>
+      </ul>
+      <p class="legend__cta">
+        <a class="btn btn--pill btn--primary" href="components.html">
+          <span>Read each component</span>
+          <span class="btn__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+          </span>
+        </a>
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>BetterAI architecture map — static, hand-built, no framework.</p>
+    <p class="site-footer__note">© 2026 · MCP rule-retrieval server</p>
+  </footer>
+
+  <script src="reveal.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nico Vega — AI / Infrastructure Engineer</title>
+  <meta name="description" content="Nico Vega — AI and infrastructure engineer building retrieval systems, MCP servers, and reliable developer tooling." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="#top">NV</a>
+      <ul class="nav-links">
+        <li><a href="#about">About</a></li>
+        <li><a href="#projects">Projects</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">AI / Infrastructure Engineer</p>
+        <h1>Nico Vega</h1>
+        <p class="lede">
+          I build the plumbing behind AI products — retrieval pipelines, MCP servers,
+          and the caching, audit, and deployment layers that keep them fast and honest in production.
+          Most of my work lives at the seam where model behavior meets real systems engineering.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#projects">See selected work</a>
+          <a class="btn btn-ghost" href="#contact">Get in touch</a>
+        </div>
+        <ul class="hero-stats">
+          <li><strong>p95 &lt; 80ms</strong><span>hybrid retrieval latency</span></li>
+          <li><strong>Docker-first</strong><span>everything ships in a container</span></li>
+          <li><strong>Audit by default</strong><span>every request is logged</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ABOUT -->
+    <section id="about" class="section">
+      <div class="section-head">
+        <h2>About</h2>
+        <span class="rule"></span>
+      </div>
+      <div class="about-grid">
+        <div class="about-text">
+          <p>
+            I'm an engineer focused on the unglamorous half of AI: the retrieval orchestration,
+            the connection limiters, the cache eviction policy, and the JSONL audit trail that lets
+            you answer "why did the model see <em>that</em>?" three weeks later.
+          </p>
+          <p>
+            My recent work centers on the Model Context Protocol — building HTTP transports with bearer auth,
+            hybrid scorers that combine grep precision with MiniLM embedding recall, and markdown corpus readers
+            that turn a folder of rules and memories into a queryable knowledge surface for coding agents.
+          </p>
+          <p>
+            I care about systems that degrade gracefully, observability you don't have to bolt on later,
+            and developer ergonomics — a good CLI is a feature, not an afterthought.
+          </p>
+        </div>
+        <aside class="about-card">
+          <h3>What I work with</h3>
+          <ul class="tag-list">
+            <li>TypeScript / Node</li>
+            <li>Python</li>
+            <li>Docker</li>
+            <li>MCP / JSON-RPC</li>
+            <li>Embedding retrieval</li>
+            <li>MiniLM / ONNX</li>
+            <li>LRU caching</li>
+            <li>Observability</li>
+          </ul>
+          <h3>Currently</h3>
+          <p class="muted">Building BetterAI — a Dockerized MCP rule-retrieval server for coding agents.</p>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PROJECTS -->
+    <section id="projects" class="section">
+      <div class="section-head">
+        <h2>Selected projects</h2>
+        <span class="rule"></span>
+      </div>
+      <div class="projects">
+        <article class="project">
+          <h3>BetterAI — MCP rule-retrieval server</h3>
+          <p>
+            A Dockerized MCP server that serves rules, skills, and memories to coding agents over an
+            HTTP + bearer transport. A retrieval orchestrator blends grep matching with MiniLM-embedding
+            similarity for hybrid scoring, fronted by an LRU cache and connection limiter, with a JSONL
+            audit log and repo-scope detection so agents only see rules relevant to the repo they're in.
+          </p>
+          <ul class="project-tech">
+            <li>TypeScript</li><li>MCP</li><li>MiniLM</li><li>Docker</li>
+          </ul>
+        </article>
+
+        <article class="project">
+          <h3>Hybrid retrieval scorer</h3>
+          <p>
+            A standalone scoring library that reconciles two retrieval signals that usually fight each other:
+            exact lexical hits from grep and fuzzy semantic neighbors from embeddings. It normalizes both into
+            a single ranked list, with tunable weighting and a tie-break that favors precision on short queries.
+          </p>
+          <ul class="project-tech">
+            <li>Embeddings</li><li>BM25-style scoring</li><li>Benchmarked</li>
+          </ul>
+        </article>
+
+        <article class="project">
+          <h3>Audit-first request pipeline</h3>
+          <p>
+            A request middleware layer that writes a structured JSONL audit record for every retrieval —
+            query, matched documents, scores, cache hit/miss, and latency — so you can replay exactly what an
+            agent was given. Pairs with a connection limiter that sheds load before the embedding model becomes
+            the bottleneck.
+          </p>
+          <ul class="project-tech">
+            <li>JSONL</li><li>Backpressure</li><li>Observability</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- CONTACT -->
+    <section id="contact" class="section contact">
+      <div class="section-head">
+        <h2>Contact</h2>
+        <span class="rule"></span>
+      </div>
+      <p class="lede">
+        Open to conversations about retrieval systems, MCP infrastructure, and developer tooling.
+      </p>
+      <div class="contact-links">
+        <a class="btn btn-primary" href="mailto:nvegab99@gmail.com">nvegab99@gmail.com</a>
+        <a class="btn btn-ghost" href="https://github.com/" rel="noopener">GitHub</a>
+        <a class="btn btn-ghost" href="https://www.linkedin.com/" rel="noopener">LinkedIn</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>&copy; 2026 Nico Vega — built with plain HTML and CSS.</p>
+  </footer>
+</body>
+</html>
