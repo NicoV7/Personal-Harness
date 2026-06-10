@@ -37,6 +37,16 @@ interface RetrieveContextOutput {
   overridden_global_ids: string[];
 }
 
+// Test ctx interface aligned with the reconciled Wave 5 ToolContext API:
+// - cache: keyFor + envelope-shaped get/set (CachedRetrieval<T>)
+// - corpusReader: fetchRules / fetchSkills / fetchMemories view methods
+interface FakeMeta {
+  agent_session_id: string;
+  parent_agent_session_id: string | null;
+  subagent_class: "main" | "subagent";
+  tool_call_id: string;
+}
+
 let retrieveContext: {
   handler: (
     input: { context: { file_paths: string[]; intent: string; symbols?: string[]; recent_diff?: string }; top_k_per_kind?: number; scope?: "merged" | "global" | "repo" },
@@ -44,15 +54,17 @@ let retrieveContext: {
       auditLog: (e: unknown) => void;
       repoRootDetector: (paths: string[]) => string | null;
       corpusReader: {
-        readGlobalRules: () => { id: string; domain: string; scope: "global" }[];
-        readRepoRules: (repoRoot: string) => { id: string; domain: string; scope: "repo" }[];
-        readGlobalSkills?: () => { id: string; scope: "global" }[];
-        readRepoSkills?: (repoRoot: string) => { id: string; scope: "repo" }[];
-        readGlobalMemories?: () => { id: string; scope: "global" }[];
-        readRepoMemories?: (repoRoot: string) => { id: string; scope: "repo" }[];
+        fetchRules: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; domain: string; scope: "global" | "repo" }[];
+        fetchSkills: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; scope: "global" | "repo" }[];
+        fetchMemories: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => { id: string; scope: "global" | "repo" }[];
       };
-      cache: { get(k: string): RetrieveContextOutput | undefined; set(k: string, v: RetrieveContextOutput): void };
+      cache: {
+        keyFor: (input: unknown) => string;
+        get: <T>(k: string) => { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number } | undefined;
+        set: <T>(k: string, v: { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number }) => void;
+      };
     },
+    meta: FakeMeta,
   ) => Promise<RetrieveContextOutput>;
 };
 try {
@@ -168,20 +180,33 @@ describe("retrieve_context against an in-memory rules dir", () => {
   }
 
   const fakeAudit = () => {};
+  const fakeMeta: FakeMeta = {
+    agent_session_id: "test-session-1",
+    parent_agent_session_id: null,
+    subagent_class: "main",
+    tool_call_id: "test-call-1",
+  };
   function makeCtx() {
-    const cache = new Map<string, RetrieveContextOutput>();
+    const cache = new Map<string, unknown>();
+    const allGlobalRules = () =>
+      readMarkdownIds(join(globalRoot, "rules")).map(r => ({ ...r, scope: "global" as const }));
+    const allRepoRules = () =>
+      readMarkdownIds(join(repoRoot, ".betterai/rules")).map(r => ({ ...r, scope: "repo" as const }));
     return {
       auditLog: fakeAudit,
       repoRootDetector: (paths: string[]) => (paths[0]?.startsWith(repoRoot) ? repoRoot : null),
       corpusReader: {
-        readGlobalRules: () =>
-          readMarkdownIds(join(globalRoot, "rules")).map(r => ({ ...r, scope: "global" as const })),
-        readRepoRules: (rr: string) =>
-          readMarkdownIds(join(rr, ".betterai/rules")).map(r => ({ ...r, scope: "repo" as const })),
+        fetchRules: (input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => {
+          const pool = input.scope === "repo" ? allRepoRules() : allGlobalRules();
+          return input.top_k !== undefined ? pool.slice(0, input.top_k) : pool;
+        },
+        fetchSkills: (_input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => [],
+        fetchMemories: (_input: { scope?: "global" | "repo"; intent?: string; top_k?: number }) => [],
       },
       cache: {
-        get: (k: string) => cache.get(k),
-        set: (k: string, v: RetrieveContextOutput) => {
+        keyFor: (input: unknown) => JSON.stringify(input),
+        get: <T>(k: string) => cache.get(k) as { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number } | undefined,
+        set: <T>(k: string, v: { payload: T; scopes_queried: ("global" | "repo")[]; repo_root_detected: string | null; overridden_global_ids: string[]; cached_at_ms: number }) => {
           cache.set(k, v);
         },
       },
@@ -196,6 +221,7 @@ describe("retrieve_context against an in-memory rules dir", () => {
         top_k_per_kind: 8,
       },
       makeCtx(),
+      fakeMeta,
     );
     expect(Array.isArray(out.rules)).toBe(true);
     expect(Array.isArray(out.overridden_global_ids)).toBe(true);
@@ -208,6 +234,7 @@ describe("retrieve_context against an in-memory rules dir", () => {
         scope: "merged",
       },
       makeCtx(),
+      fakeMeta,
     );
     const colliding = out.rules.filter(r => r.id === "use-snake-case");
     expect(colliding.length).toBe(1);
@@ -222,6 +249,7 @@ describe("retrieve_context against an in-memory rules dir", () => {
         scope: "merged",
       },
       makeCtx(),
+      fakeMeta,
     );
     const additive = out.rules.find(r => r.id === "avoid-i-prefix");
     expect(additive).toBeDefined();
@@ -236,6 +264,7 @@ describe("retrieve_context against an in-memory rules dir", () => {
         scope: "merged",
       },
       ctx,
+      fakeMeta,
     );
     expect(out.rules.every(r => r.scope === "global")).toBe(true);
     expect(out.overridden_global_ids).toEqual([]);

@@ -45,6 +45,23 @@ const MEMORY_REQUIRED = [
 const MEMORY_KINDS = new Set(["decision", "failure", "discovery", "constraint"]);
 const MEMORY_DURABILITIES = new Set(["short", "medium", "long"]);
 
+/**
+ * Programmatic validation entry point.
+ *
+ * Validates the corpus rooted at `rootDir`. Returns 0 on success, 1 on
+ * validation errors. Used by tests and downstream tooling that wants to
+ * validate a specific corpus root without invoking the CLI.
+ *
+ * For the CLI-driven flow (scans both global and repo corpora from env +
+ * CWD), use {@link runValidate}.
+ */
+export async function validate(rootDir: string): Promise<number> {
+  const errors: ValidationError[] = [];
+  const idsByScopeKind = new Map<string, Set<string>>();
+  validateRoot(rootDir, "global", errors, idsByScopeKind);
+  return errors.length === 0 ? 0 : 1;
+}
+
 export function runValidate(_args: string[]): number {
   const home = process.env.HOME ?? homedir();
   const globalRoot = process.env.BETTERAI_HOME ?? join(home, ".betterai");

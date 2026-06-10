@@ -21,16 +21,17 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Wave 5 reconciled API: startServer({ tools: McpTool[]; env?: Partial<ResolvedEnv> })
+// returns StartedServer { app, mcpServer, shutdown, port }. Env knobs:
+// BETTERAI_CORPUS_ROOT, BETTERAI_MCP_PORT, BETTERAI_TOKEN_PATH, BETTERAI_BIND_HOST.
 type StartServer = (opts: {
-  corpusRoot: string;
-  port: number;
-  tokenPath: string;
-  hostname?: string;
-}) => Promise<{ close: () => Promise<void>; port: number }>;
+  tools: unknown[];
+  env?: Record<string, string | number | undefined>;
+}) => Promise<{ shutdown: () => Promise<void>; port: number }>;
 
 let startServer: StartServer | null;
 try {
-  startServer = (await import("../server/main.js")).startServer;
+  startServer = (await import("../server/main.js")).startServer as unknown as StartServer;
 } catch {
   startServer = null;
 }
@@ -40,7 +41,7 @@ const TOKEN = "test-token-1234567890";
 describe("betterai-server boot + /health bearer gate", () => {
   let corpusRoot: string;
   let tokenPath: string;
-  let server: { close: () => Promise<void>; port: number } | null = null;
+  let server: { shutdown: () => Promise<void>; port: number } | null = null;
   const PORT = 27777;
 
   beforeAll(async () => {
@@ -52,12 +53,22 @@ describe("betterai-server boot + /health bearer gate", () => {
     tokenPath = join(tokenDir, "token");
     writeFileSync(tokenPath, TOKEN);
     if (startServer) {
-      server = await startServer({ corpusRoot, port: PORT, tokenPath, hostname: "127.0.0.1" });
+      server = await startServer({
+        tools: [],
+        env: {
+          BETTERAI_CORPUS_ROOT: corpusRoot,
+          BETTERAI_MCP_PORT: PORT,
+          BETTERAI_TOKEN_PATH: tokenPath,
+          BETTERAI_BIND_HOST: "127.0.0.1",
+          BETTERAI_AUDIT_PATH: join(corpusRoot, "audit", "audit.jsonl"),
+          BETTERAI_PROJECTS_ROOT: join(corpusRoot, "projects"),
+        },
+      });
     }
   });
 
   afterAll(async () => {
-    if (server) await server.close();
+    if (server) await server.shutdown();
     rmSync(corpusRoot, { recursive: true, force: true });
   });
 

@@ -124,7 +124,14 @@ export class RetrievalOrchestrator {
       this.emitAudit(meta, key, {
         event_type: "retrieve",
         latency_ms: Date.now() - t0,
-        rules: cached.payload.rules,
+        rules: cached.payload.rules.map((r) => ({
+          id: r.id,
+          kind: "rule" as const,
+          scope: r.scope,
+          domain: r.domain,
+          score: 0,
+          reason: "cache_hit",
+        })),
         scopes_queried,
         repo_root_detected: repo.repo_root,
         overridden_global_ids: cached.payload.overridden_global_ids,
