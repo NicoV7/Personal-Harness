@@ -66,6 +66,40 @@ export interface RetrieveOutput {
   repo_root_detected: string | null;
 }
 
+// ---- Structured no-match (G5-M1, NEW in v1.5) ------------------------------
+
+/**
+ * Echo of the query the server actually evaluated (post-normalization),
+ * so an agent that hit `match: "none"` can see exactly what was searched
+ * and decide how to rephrase — without diffing its own call site.
+ */
+export interface QueryEcho {
+  intent: string;
+  file_paths: string[];
+  symbols: string[];
+}
+
+/**
+ * G5-M1 fault-tolerance mode: "search returns nothing" must be a
+ * FIRST-CLASS structured response, not bare empty arrays — agents
+ * branch on `match` explicitly instead of inferring emptiness.
+ *
+ * Discriminant semantics:
+ *   - `match: "matched"`  — at least one rule, skill, or memory returned.
+ *   - `match: "none"`     — zero artifacts across every kind; `reason`
+ *     and `query_echo` are present so the agent can report or retry.
+ *
+ * The empty arrays are still present alongside (additive extension of
+ * the v1.0 output shape) so existing consumers keep working. The audit
+ * event is emitted either way, with `rules_returned: []` on no-match.
+ */
+export type RetrieveMatchInfo =
+  | { match: "matched" }
+  | { match: "none"; reason: "no_match"; query_echo: QueryEcho };
+
+/** The retrieve_context tool's full output: v1.0 lists + match discriminant. */
+export type RetrieveContextResult = RetrieveOutput & RetrieveMatchInfo;
+
 // ---- The retrieval-scorer seam (NEW in v1.5) ------------------------------
 
 export const RETRIEVAL_MODES = ["grep", "embedding", "hybrid"] as const;
