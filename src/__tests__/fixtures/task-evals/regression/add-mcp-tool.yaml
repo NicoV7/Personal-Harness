@@ -1,0 +1,40 @@
+id: add-mcp-tool
+held_out: false
+# Base-model-violating fixture. Selected per the 2026-06-10 A/B finding: generic
+# hygiene rules (semantic-html etc.) are already satisfied by a frontier base model,
+# so they show ~0 corpus lift. THESE rules are project-specific BetterAI conventions a
+# vanilla agent cannot know and will violate unprompted — the differential IS the signal.
+task_description: |
+  Add a new MCP tool `list_rules` to the BetterAI server that returns the ids and titles
+  of all rules currently loaded in the corpus. Wire it into the server like the existing
+  tools. Write the handler and register it.
+
+# Project rules a vanilla agent (no corpus) typically VIOLATES on this task:
+expected_rule_fires:
+  - mcp-tools-require-bearer          # vanilla often exposes the tool without the bearer/auth path
+  - audit-must-include-parent-session # vanilla omits parent_agent_session_id / subagent_class in the audit event
+  - no-stdio-mcp-transport            # vanilla may reach for a stdio transport example
+  - typed-errors-from-errors-layer    # vanilla throws `new Error("...")` instead of a BetterAIError factory
+
+# Why this is a good corpus probe: a frontier base model writing an MCP tool defaults to
+# generic SDK patterns and does NOT know BetterAI's bearer-on-every-tool, parent-session
+# audit invariant, HTTP/SSE-only transport, or central errors layer. With the corpus, B
+# should cite + apply them; without it, A should miss most.
+rubric:
+  - id: bearer-enforced
+    weight: 2
+    criterion: "Tool is reachable only through the bearer-authenticated /mcp path; no auth bypass added"
+  - id: audit-parent-session
+    weight: 2
+    criterion: "Any audit event the tool emits carries parent_agent_session_id + subagent_class (non-null for subagents)"
+  - id: no-stdio
+    weight: 2
+    criterion: "No stdio MCP transport introduced; HTTP/SSE only"
+  - id: typed-errors
+    weight: 2
+    criterion: "Failure paths throw a BetterAIError (BAI-* code) from src/errors, not a raw Error"
+  - id: registration-correct
+    weight: 1
+    criterion: "Registered via the high-level McpServer.registerTool path, returns the MCP content envelope"
+
+expected_rubric_min: 4   # control (no corpus) is EXPECTED to clear ~4/9; the corpus lift is the gap above it

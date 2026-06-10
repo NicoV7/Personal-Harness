@@ -1,0 +1,33 @@
+id: add-tunable-timeout
+held_out: false
+# Base-model-violating fixture (config/constants discipline).
+task_description: |
+  Add a configurable request-handling timeout to the BetterAI MCP server: if a tool call
+  takes longer than the timeout, abort it. Make the timeout tunable. Wire it into the
+  server bootstrap.
+
+# Project rules a vanilla agent typically VIOLATES:
+expected_rule_fires:
+  - config-from-env-not-hardcoded            # vanilla hardcodes e.g. `30000` at the call site
+  - no-magic-numbers-import-from-constants   # vanilla inlines the literal instead of a named const
+  - typed-errors-from-errors-layer           # timeout error should be a BetterAIError, not raw
+
+# Why: a frontier base model will almost always write `const TIMEOUT = 30000` (or inline 30000)
+# at the use site. BetterAI's house style requires deployment-tunable values to come from the
+# env layer (contracts/env.ts) with a documented default, and code-tunable policy from
+# src/constants/. The corpus should redirect B to the env/constants layers; A won't know they exist.
+rubric:
+  - id: env-driven
+    weight: 2
+    criterion: "Timeout default lives in the env layer (BETTERAI_* var in contracts/env.ts), not a source literal"
+  - id: named-constant
+    weight: 2
+    criterion: "Any non-env policy number is a named export in src/constants/, not a bare literal"
+  - id: typed-error
+    weight: 1
+    criterion: "Timeout abort surfaces a BetterAIError (BAI-* code), not a raw Error"
+  - id: no-duplication
+    weight: 1
+    criterion: "The default is defined once (no copy in main.ts AND the class)"
+
+expected_rubric_min: 1   # control typically clears ~1/6 (maybe a local const); corpus lift = env+constants placement
