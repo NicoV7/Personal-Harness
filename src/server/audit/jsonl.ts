@@ -61,6 +61,13 @@ export interface AuditEvent {
   rules_returned: AuditEventRuleEntry[];
   overridden_global_ids: string[];
   latency_ms: number;
+  /**
+   * Whether the retrieval was served from the in-memory cache.
+   * Optional — populated by tools on cache-served retrievals; absent on
+   * misses and on non-retrieve events. The downstream validator treats
+   * it as additive and ignores it for the parent-session invariant.
+   */
+  cache_hit?: boolean;
   // v2 self-learning fields — reserved, always null in v1.
   downstream_apply_event_id: null;
   downstream_commit_sha: null;
@@ -107,22 +114,37 @@ export class JsonlAuditWriter {
   private readonly maxBytes: number;
   private readonly maxAgeMs: number;
   private readonly now: () => Date;
+  /**
+   * Whether the parent directory has been ensured on disk. Flipped on
+   * first append so construction never touches the filesystem — the
+   * server-boot tests run with BETTERAI_AUDIT_PATH defaulting to
+   * /data/audit/audit.jsonl which the test process can't mkdir, and a
+   * lazy mkdir means simply constructing the writer (e.g. inside
+   * startServer) doesn't blow up.
+   */
+  private _dirInitialized = false;
 
   constructor(opts: AuditWriterOptions) {
     this.path = opts.path;
     this.maxBytes = opts.maxBytes ?? MAX_BYTES;
     this.maxAgeMs = opts.maxAgeMs ?? MAX_AGE_MS;
     this.now = opts.now ?? (() => new Date());
-    const dir = dirname(this.path);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
   }
 
   append(event: AuditEvent): void {
     validateAuditEvent(event);
+    this.ensureDir();
     this.rotateIfNeeded();
     appendFileSync(this.path, JSON.stringify(event) + "\n", { mode: 0o640 });
+  }
+
+  private ensureDir(): void {
+    if (this._dirInitialized) return;
+    const dir = dirname(this.path);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    this._dirInitialized = true;
   }
 
   private rotateIfNeeded(): void {

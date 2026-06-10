@@ -99,4 +99,16 @@ export class ContextCache {
   get size(): number {
     return this.lru.size;
   }
+
+  /**
+   * Derive the cache key for a HashableContext.
+   *
+   * Convenience wrapper over `contextHash()` so the MCP tool handlers
+   * don't have to import both the cache and the hash function side by
+   * side — they hold a single `ctx.cache` and call `cache.keyFor(input)`.
+   * Pure delegation; no internal state mutated.
+   */
+  keyFor(input: HashableContext): string {
+    return contextHash(input);
+  }
 }

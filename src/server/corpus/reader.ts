@@ -486,6 +486,104 @@ export class CorpusReader {
   findRule(snapshot: CorpusSnapshot, id: string): Rule | undefined {
     return snapshot.rules.find((r) => r.id === id);
   }
+
+  // ---- View helpers (Wave 5 contract surface) ---------------------------
+  //
+  // Each helper is a thin filter over `read()`. We deliberately call
+  // `read()` afresh inside each call rather than caching the snapshot
+  // here — the reader already owns its own caching/invalidation story
+  // (it's filesystem-backed and stateless w.r.t. invalidation), and
+  // pushing a memo into this class would create two sources of truth.
+  //
+  // `intent` filtering is a best-effort substring match against an
+  // artifact's `applies_when.intents` list. `scope` filters by the
+  // scope-stamp the reader applies at load time. `top_k` truncates the
+  // post-filter list. None of these are ranked — ranking is the
+  // RetrievalOrchestrator's job; these helpers exist so the MCP tools
+  // can serve trivial "give me everything in this scope" queries.
+
+  fetchRules(input: {
+    scope?: Scope;
+    intent?: string;
+    top_k?: number;
+  }): Rule[] {
+    const snapshot = this.read();
+    return applyViewFilters(snapshot.rules, input);
+  }
+
+  fetchSkills(input: {
+    scope?: Scope;
+    intent?: string;
+    top_k?: number;
+  }): Skill[] {
+    const snapshot = this.read();
+    return applyViewFilters(snapshot.skills, input);
+  }
+
+  fetchMemories(input: {
+    scope?: Scope;
+    intent?: string;
+    top_k?: number;
+  }): Memory[] {
+    const snapshot = this.read();
+    // Memories carry `applies_to_future_intents`, not `applies_when`.
+    // Filter by that field when `intent` is provided.
+    const scoped = filterByScope(snapshot.memories, input.scope);
+    const intentFiltered = input.intent
+      ? scoped.filter((m) =>
+          (m.applies_to_future_intents ?? []).some((i) =>
+            i.includes(input.intent!),
+          ),
+        )
+      : scoped;
+    return typeof input.top_k === "number"
+      ? intentFiltered.slice(0, input.top_k)
+      : intentFiltered;
+  }
+
+  fetchRuleById(id: string): Rule | null {
+    const snapshot = this.read();
+    return snapshot.rules.find((r) => r.id === id) ?? null;
+  }
+
+  fetchCheckableRules(): Rule[] {
+    const snapshot = this.read();
+    return snapshot.rules.filter((r) => r.check?.kind !== undefined);
+  }
+}
+
+interface ViewFilterInput {
+  scope?: Scope;
+  intent?: string;
+  top_k?: number;
+}
+
+interface ArtifactWithAppliesWhen {
+  scope: Scope;
+  applies_when?: AppliesWhenT;
+}
+
+function filterByScope<T extends { scope: Scope }>(
+  items: T[],
+  scope: Scope | undefined,
+): T[] {
+  if (!scope) return items;
+  return items.filter((it) => it.scope === scope);
+}
+
+function applyViewFilters<T extends ArtifactWithAppliesWhen>(
+  items: T[],
+  input: ViewFilterInput,
+): T[] {
+  const scoped = filterByScope(items, input.scope);
+  const intentFiltered = input.intent
+    ? scoped.filter((it) =>
+        (it.applies_when?.intents ?? []).some((i) => i.includes(input.intent!)),
+      )
+    : scoped;
+  return typeof input.top_k === "number"
+    ? intentFiltered.slice(0, input.top_k)
+    : intentFiltered;
 }
 
 /**
