@@ -130,8 +130,13 @@ export class MissedRetrievalDetector {
   }
 
   private gc(nowMs: number): void {
+    // The GC threshold must never undercut the coverage window: with a
+    // configured recencyMs longer than SESSION_GC_MS, sweeping at the
+    // 5-minute floor would delete still-covered sessions and emit FALSE
+    // missed_retrieval events.
+    const gcMs = Math.max(SESSION_GC_MS, this.recencyMs);
     for (const [k, v] of this.sessions) {
-      if (nowMs - v.lastRetrievalAtMs > SESSION_GC_MS) this.sessions.delete(k);
+      if (nowMs - v.lastRetrievalAtMs > gcMs) this.sessions.delete(k);
     }
   }
 }
