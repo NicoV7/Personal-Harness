@@ -78,7 +78,12 @@ export interface RetrievalDeps {
   globalCorpusRoot: string;
   router: DomainRouter;
   cache: ContextCache;
-  repoDetector: RepoDetector;
+  /**
+   * Walk-up repo-root detector.  Optional: when absent (or null), the
+   * orchestrator degrades to global-only retrieval instead of crashing —
+   * scope detection is an enhancement, not a load-bearing dependency.
+   */
+  repoDetector?: RepoDetector | null;
   auditLog: AuditLogFn;
   /**
    * Matching strategy behind the async-batch RetrievalScorer seam
@@ -132,6 +137,7 @@ export class RetrievalOrchestrator {
     if (cached) {
       this.emitAudit(meta, key, {
         event_type: "retrieve",
+        cache_hit: true,
         latency_ms: Date.now() - t0,
         rules: cached.payload.rules.map((r) => ({
           id: r.id,
@@ -216,6 +222,7 @@ export class RetrievalOrchestrator {
 
     this.emitAudit(meta, key, {
       event_type: "retrieve",
+      cache_hit: false,
       latency_ms: Date.now() - t0,
       rules: auditRules.length
         ? auditRules
@@ -281,9 +288,10 @@ export class RetrievalOrchestrator {
     rule_id: string,
     repoHint?: string,
   ): Rule | undefined {
-    const detection = repoHint
-      ? this.deps.repoDetector.detect(repoHint)
-      : { repo_root: null, has_betterai_dir: false, git_head_mtime_ms: null };
+    const detection =
+      repoHint && this.deps.repoDetector
+        ? this.deps.repoDetector.detect(repoHint)
+        : { repo_root: null, has_betterai_dir: false, git_head_mtime_ms: null };
     const reader = new CorpusReader({
       globalRoot: this.deps.globalCorpusRoot,
       repoRoot:
@@ -303,8 +311,13 @@ export class RetrievalOrchestrator {
     if (scope === "global") {
       return { repo_root: null, has_betterai_dir: false };
     }
+    const detector = this.deps.repoDetector;
+    if (!detector) {
+      // No detector wired → global-only fallback, never a crash.
+      return { repo_root: null, has_betterai_dir: false };
+    }
     if (explicitRoot) {
-      const det = this.deps.repoDetector.detect(explicitRoot);
+      const det = detector.detect(explicitRoot);
       return {
         repo_root: det.repo_root ?? explicitRoot,
         has_betterai_dir: det.has_betterai_dir,
@@ -313,7 +326,7 @@ export class RetrievalOrchestrator {
     if (!ctx.file_paths.length) {
       return { repo_root: null, has_betterai_dir: false };
     }
-    const det = this.deps.repoDetector.detectFromBatch(ctx.file_paths);
+    const det = detector.detectFromBatch(ctx.file_paths);
     return { repo_root: det.repo_root, has_betterai_dir: det.has_betterai_dir };
   }
 
@@ -322,6 +335,7 @@ export class RetrievalOrchestrator {
     context_hash: string,
     args: {
       event_type: "retrieve";
+      cache_hit: boolean;
       latency_ms: number;
       rules: AuditEventRuleEntry[];
       scopes_queried: Scope[];
@@ -337,6 +351,7 @@ export class RetrievalOrchestrator {
       subagent_class: meta.subagent_class,
       tool_call_id: meta.tool_call_id,
       context_hash,
+      cache_hit: args.cache_hit,
       repo_root_detected: args.repo_root_detected,
       scopes_queried: args.scopes_queried,
       rules_returned: args.rules,
