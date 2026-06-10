@@ -1,6 +1,41 @@
-# BetterAI — Handoff (2026-06-09 evening, post-Wave-5)
+# BetterAI — Handoff (2026-06-10, post-Wave-6)
 
-> Supersedes the morning Wave-4 handoff. If you put this down for a week and came back, this doc is the single page that gets you executing again.
+> Supersedes the 2026-06-09 post-Wave-5 handoff. If you put this down for a week and came back, this doc is the single page that gets you executing again.
+
+---
+
+## Wave 6 — DONE (2026-06-10, this session)
+
+`npm run typecheck` ✅ 0 errors. `npm test` ✅ **198 passed + 1 opt-in skipped** (was 66). Executed as 4 Workflow-orchestrated waves of parallel worktree specialists + 1 hotfix specialist, green gate between every merge.
+
+| Wave | What landed | Key commits |
+|---|---|---|
+| **0** | SDK pinned ^1.29.0; @hono/node-server + zod declared | `1a4f032` |
+| **0.5** | `verify-uncertain-facts` corpus rule (encodes "web-search facts / ask on scope, never guess"); office-hours skill fix proposal at `docs/proposals/office-hours-skill-fix.md` (agent permission-blocked from `~/.claude/skills/*`) | `275b7df`, `b2a0c37` |
+| **1** | **`/mcp` placeholder GONE**: SDK 1.29 `WebStandardStreamableHTTPServerTransport`, per-session stateful `McpServer` pairs (mcp-session-id, GET=SSE stream, DELETE=close, idle GC); fixed silent-registration bug (low-level `Server.tool()` probe meant ALL 7 tools were never registered); limiter wraps POST only; `src/contracts/` (audit/retrieval/tool/env + typecheck-time drift guards); SDK-client e2e suite | `479f497`, `1bc87f4` |
+| **2** | G4: bearer hosts env-driven via `allowedHostsFromEnv` (port-27777 regression pinned by live-boot test), timingSafeEqual, typed BAI-101/102 errors, 24 adversarial tests; G1: 10 limiter tests (storm N=100); G2: 12 missed-retrieval tests + **real bug fixed** (GC fired FALSE misses when recencyMs > 5min); G3: typed `AuditIoError`, EISDIR/EACCES/rotation/concurrency hardening; G5-M1: structured `{match:"none", reason:"no_match"}` | `db0215a`, `4f43fbf`, `032b21a` |
+| **3** | MiniLM hybrid retrieval behind `RetrievalScorer` seam (lazy load, content-hash embedding cache, grep fallback on model failure, opt-in real-model test via `BETTERAI_TEST_EMBEDDINGS=1`); **root cause of the "18 frontmatter issues": 3 bugs in the hand-rolled YAML parser** — corpus files were valid all along; seed corpus now loads 13 rules + 5 skills + 5 memories with 0 issues | `aedd045`, `809c3a3` |
+| **4** | `betterai gate --start/--status/--abort` (14 tests); G7 orchestrator tests + **2 real bugs fixed** (`cache_hit` audit field never set; null repoDetector crash) | `470dab4`, `e439961` |
+| **5 (hotfix)** | **Live verification caught the cycle's biggest bug**: all retrieval tools used the global-only singleton `CorpusReader` — repo rules were unreachable while audit claimed `scopes_queried: ["global","repo"]`. All 6 tools rewired to `RetrievalOrchestrator` (+ scoped reader for check-file); honesty regression test added (scopes_queried only includes "repo" when readable) | `1bf6c58` |
+
+### Cycle-end verification (PASSED, evidence in `~/.betterai-verify/audit.jsonl`)
+
+Real SDK MCP client over HTTP: two sessions (main + researcher subagent) sharing `parent_agent_session_id`, distinct `agent_session_id`s, `subagent_class` threaded, **4 rules returned mixing global + repo scope** (incl. `verify-uncertain-facts:repo`), `cache_hit: true` on the second call, `match: "matched"` discriminant. `gate --start/--status/--abort` exercised live (checklist all OK, projection + proxy note render, abort archives).
+
+### Wave-6 follow-ups (tracked, not blockers)
+
+- **Router mini-YAML parser ignores flat top-level keys** (`router.ts`) — `domain-router.yaml` silently falls back to built-in default domains `["maintainability","methodology"]`. Swap in the `yaml` package (existing TODO) and add G8 router tests.
+- `record_memory` still uses stateless `detectRepoRoot`; can create `.betterai/` where none exists when `scope:"repo"` forced.
+- `ToolContext.corpusReader` singleton now unused by tools; drop in a contract cleanup.
+- Embeddings in Docker: bake the MiniLM model via `BETTERAI_MODEL_CACHE_DIR` (first hybrid score downloads ~25MB otherwise; offline degrades cleanly to grep).
+- Apply `docs/proposals/office-hours-skill-fix.md` to `~/.claude/skills/office-hours/SKILL.md` manually (user action).
+
+### The next actions (post-Wave-6, in order)
+
+1. **Start Item 4 dogfooding**: `betterai gate --start` for real (5 days × ≥5 fires × ≥3 behavior changes). The full pipeline is now live and observable.
+2. v1.5 Item 2.5: `report_rule_application` tool + Stop hook (turns the gate's behavior-change proxy into real `apply_compliance` events).
+3. Fix the router YAML parser + G8 tests; then retrieval-quality tuning (Items 5a/5b/6) — note routing currently runs on default domains.
+4. Website-build eval (per EVAL-HARNESS.md): portfolio + repo architecture map, control vs corpus-loaded agent, HITL judging — user decision: run now that /mcp is wired.
 >
 > **Companion doc**: [`docs/RELIABILITY-TEST-GAPS.md`](RELIABILITY-TEST-GAPS.md) — test gap analysis ranked by reliability ROI; agents are hard to monitor with human-in-the-loop, so the audit log is the only observability surface and the gaps in it are the gaps in BetterAI's reliability story.
 
@@ -281,9 +316,11 @@ Total: ~4 days. Do these before dogfooding (action 3) so gate-day failures don't
 
 **DONE:** four design iterations × three adversarial reviews + one approved design + v4.1 scoping extension; 23 seed corpus files + 5 BetterAI repo rules + 3 _meta docs; 51-file Phase 1.0 scaffold; 10 component HTML docs; auto-stamp harness; **Wave 5 contract reconciliation (typecheck 0 + 66/66 tests)**; v1.5 plan approved with Codex's 6-item cut; 3 new corpus rules from session code-review; eval harness design (`docs/EVAL-HARNESS.md`); reliability test gap analysis (`docs/RELIABILITY-TEST-GAPS.md`); 17 commits on main.
 
-**NOT YET DONE:** `/mcp` HTTP transport wired (placeholder); install.sh end-to-end run; `betterai gate --start/--status/--abort` verbs; Phase 1.0 dogfooding gate; Tier 1 reliability tests (G1-G5); Items 1b/2/2.5/3/4/5/6 of the v1.5 plan; embeddings; ast-grep; VSCode extension; eval lift harness implementation.
+**NOT YET DONE (updated post-Wave-6):** install.sh end-to-end run; Phase 1.0 dogfooding gate (verbs now exist — run it); Items 2/2.5/3/5/6 of the v1.5 plan; router YAML parser fix + G8 tests; ast-grep; VSCode extension; eval lift harness implementation; website-build eval.
 
-**The single next action:** Wire the MCP SDK's streamable HTTP transport into `src/server/transport/http-sse.ts` `/mcp`. Without this, no real MCP client can call any tool, and Item 2.5's `report_rule_application` Stop hook has nothing to call. Expected ~1 day. Then run Phase 4/5 harness verification from the Wave 5 plan, then Tier 1 reliability tests, then Item 4 dogfooding.
+> Superseded by Wave 6 (see §"Wave 6 — DONE" at top): `/mcp` transport ✅, contracts (Item 1b) ✅, gate verbs (Item 4 tooling) ✅, Tier-1 G1-G5 ✅, embeddings (hybrid) ✅, Phase 4/5 harness verification ✅.
+
+**The single next action:** Run the 5-day dogfooding gate for real: `betterai gate --start`, use BetterAI from Claude Code on daily work, `betterai gate --status` to track. In parallel, Item 2.5 (`report_rule_application` + Stop hook) turns the gate's behavior-change proxy into real `apply_compliance` measurements.
 
 ---
 
