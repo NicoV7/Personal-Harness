@@ -21,10 +21,9 @@ applies_when:
     - "scope"
 related:
   - config-from-env-not-hardcoded
-check:
-  kind: none
-  notes: "Behavioral rule for agents; compliance is observable in the audit log as a web-search or clarifying-question step preceding decisions that cite external facts."
 ---
+
+> Behavioral rule — no mechanical `check` (v1 allows only regex/ast-grep). Compliance is observable in the audit log as a web-search or clarifying-question step preceding decisions that cite external facts.
 
 ## What this rule says
 
