@@ -221,43 +221,63 @@ function parseYamlLike(src: string): Record<string, unknown> {
     const key = m[1];
     const rest = m[2];
     if (rest === "" || rest === "|" || rest === ">") {
-      // Block scalar or nested object — gather indented continuation lines.
+      // Block scalar, nested object, or block list — gather indented
+      // continuation lines.  An explicit `|`/`>` pins block-scalar mode so
+      // prose lines that happen to start with `- ` are never misread as
+      // list items.
       const block: string[] = [];
       const childKv: Record<string, unknown> = {};
+      const listItems: unknown[] = [];
       i += 1;
-      let mode: "block" | "object" | "unknown" = "unknown";
+      let mode: "block" | "object" | "list" | "unknown" =
+        rest === "" ? "unknown" : "block";
+      let pendingChildKey: string | null = null;
       while (i < lines.length) {
         const next = lines[i];
         if (!next.startsWith("  ") && next.trim() !== "") break;
         const stripped = next.replace(/^ {2}/, "");
+        if (mode === "block") {
+          block.push(stripped);
+          i += 1;
+          continue;
+        }
         const kv = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(stripped);
-        if (kv && (mode === "unknown" || mode === "object")) {
+        const item = /^\s*-\s+(.*)$/.exec(stripped);
+        if (kv) {
           mode = "object";
-          childKv[kv[1]] = parseScalar(kv[2]);
+          if (kv[2] === "") {
+            // Child key whose list items (if any) follow on deeper-indented
+            // lines; stays null when nothing follows so the Zod safety net
+            // reports it instead of silently inventing an empty array.
+            pendingChildKey = kv[1];
+            childKv[kv[1]] = null;
+          } else {
+            pendingChildKey = null;
+            childKv[kv[1]] = parseScalar(kv[2]);
+          }
+        } else if (item) {
+          if (mode === "object") {
+            if (pendingChildKey !== null) {
+              const cur = childKv[pendingChildKey];
+              const arr = Array.isArray(cur) ? cur : [];
+              arr.push(parseScalar(item[1]));
+              childKv[pendingChildKey] = arr;
+            }
+            // A list item with no preceding child key is malformed; drop
+            // it and let the schema validation surface the gap.
+          } else {
+            mode = "list";
+            listItems.push(parseScalar(item[1]));
+          }
         } else {
           mode = mode === "object" ? mode : "block";
-          if (stripped.startsWith("- ")) {
-            // list item under a key
-            (out[key] as unknown[] | undefined) ??
-              (out[key] = [] as unknown[]);
-            (out[key] as unknown[]).push(parseScalar(stripped.slice(2)));
-          } else {
-            block.push(stripped);
-          }
+          if (mode === "block") block.push(stripped);
         }
         i += 1;
       }
       if (mode === "object") out[key] = childKv;
+      else if (mode === "list") out[key] = listItems;
       else if (block.length) out[key] = block.join("\n");
-      continue;
-    }
-    if (rest.startsWith("[") && rest.endsWith("]")) {
-      out[key] = rest
-        .slice(1, -1)
-        .split(",")
-        .map((s) => parseScalar(s.trim()))
-        .filter((s) => s !== "");
-      i += 1;
       continue;
     }
     out[key] = parseScalar(rest);
@@ -269,6 +289,14 @@ function parseYamlLike(src: string): Record<string, unknown> {
 function parseScalar(raw: string): unknown {
   const s = raw.trim();
   if (s === "" || s === "null" || s === "~") return null;
+  if (s.startsWith("[") && s.endsWith("]")) {
+    // Inline flow sequence, e.g. `paths: ["src/**", "tests/**"]`.
+    // No support for commas inside quoted items — corpus convention
+    // (rules/_meta/schema.md) never uses them.
+    const inner = s.slice(1, -1).trim();
+    if (inner === "") return [];
+    return inner.split(",").map((x) => parseScalar(x.trim()));
+  }
   if (s === "true") return true;
   if (s === "false") return false;
   if (/^-?\d+$/.test(s)) return Number(s);
