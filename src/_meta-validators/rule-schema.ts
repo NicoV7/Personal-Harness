@@ -381,7 +381,7 @@ const RULE_REQUIRED_SECTIONS = [
 const RULE_FORBIDDEN_CHECK_KINDS = new Set(["shell", "ts-module"]);
 const RULE_ALLOWED_CHECK_KINDS = new Set(["regex", "ast-grep"]);
 
-export function validateRule(filepath: string, contents: string): ValidationResult {
+export function validateRule(_filepath: string, contents: string): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
   const fm = parseFrontmatter(contents);
@@ -479,7 +479,7 @@ const SKILL_REQUIRED_SECTIONS = [
   "Related rules",
 ];
 
-export function validateSkill(filepath: string, contents: string): ValidationResult {
+export function validateSkill(_filepath: string, contents: string): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
   const fm = parseFrontmatter(contents);

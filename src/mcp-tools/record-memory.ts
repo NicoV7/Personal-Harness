@@ -19,8 +19,16 @@
  * same id concurrently").
  */
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { ToolContext, AuditEvent } from '../server/main.js'
+import type {
+  ToolContext,
+  ToolCallMeta,
+  McpTool,
+  AuditEvent,
+} from '../server/main.js'
+import { detectRepoRoot } from '../server/scope/detect.js'
 
 const memoryFrontmatterSchema = z
   .object({
@@ -67,7 +75,6 @@ interface RecordMemoryOutput {
   id: string
   path: string
   scope: 'global' | 'repo'
-  scope_fallback?: 'global' // present when caller asked for repo but no repo was detectable
   already_existed: boolean
 }
 
@@ -78,7 +85,7 @@ const DESCRIPTION =
   'file, and returns the id and path. On id collision, returns the existing path ' +
   '(no overwrite). Rules and skills are NOT agent-writable; only memories.'
 
-export default {
+const tool: McpTool<unknown, RecordMemoryOutput> = {
   name: 'record_memory',
   description: DESCRIPTION,
   inputSchema: inputSchema.shape,
@@ -86,27 +93,18 @@ export default {
   handler: async (
     rawInput: unknown,
     ctx: ToolContext,
+    meta: ToolCallMeta,
   ): Promise<RecordMemoryOutput> => {
     const startedAt = performance.now()
     const input: Input = inputSchema.parse(rawInput)
     const { memory, scope: requestedScope, context } = input
 
-    // Run the corpusReader's schema/cross-ref validator as a second gate
-    // beyond the Zod check (it may enforce things like related-id existence).
-    const validation = await ctx.corpusReader.validateMemory(memory)
-    if (!validation.ok) {
-      throw new ValidationError(
-        `memory schema validation failed: ${validation.errors.join('; ')}`,
-      )
-    }
-
     // Determine scope.
     const repoRootDetected = context?.file_paths?.length
-      ? ctx.repoRootDetector(context.file_paths)
+      ? detectRepoRoot(context.file_paths)
       : null
 
     let scope: 'global' | 'repo'
-    let scopeFallback: 'global' | undefined
 
     if (requestedScope === 'repo') {
       if (!repoRootDetected) {
@@ -122,34 +120,48 @@ export default {
       scope = 'global'
     } else {
       // Default: repo if detectable, else global.
-      if (repoRootDetected) {
-        scope = 'repo'
-      } else {
-        scope = 'global'
-      }
+      scope = repoRootDetected ? 'repo' : 'global'
     }
 
     // Resolve target path and write.
     const yyyymm = memory.frontmatter.date.slice(0, 7) // "2026-06"
-    const writeResult = await ctx.corpusReader.writeMemory({
-      memory,
-      scope,
-      repoRoot: scope === 'repo' ? repoRootDetected : null,
+    const rootDir =
+      scope === 'repo'
+        ? join(repoRootDetected!, '.betterai')
+        : ctx.config.BETTERAI_CORPUS_ROOT
+    const targetPath = join(
+      rootDir,
+      'memories',
       yyyymm,
+      `${memory.frontmatter.id}.md`,
+    )
+
+    let alreadyExisted = false
+    if (existsSync(targetPath)) {
+      // INSERT IGNORE: keep the existing file, return its path.
+      alreadyExisted = true
+    } else {
+      mkdirSync(dirname(targetPath), { recursive: true })
+      writeFileSync(targetPath, serializeMemory(memory), { mode: 0o640 })
+    }
+
+    const cacheKey = ctx.cache.keyFor({
+      file_paths: [targetPath],
+      intent: `record_memory:${memory.frontmatter.id}`,
+      symbols: [],
+      recent_diff: '',
+      repo_root_detected: repoRootDetected,
+      scopes_queried: [scope],
     })
 
     const event: AuditEvent = {
       event_type: 'memory_recorded',
       ts: new Date().toISOString(),
-      agent_session_id: ctx.session?.agentSessionId ?? null,
-      parent_agent_session_id: ctx.session?.parentAgentSessionId ?? null,
-      subagent_class: ctx.session?.subagentClass ?? null,
-      tool_call_id: ctx.toolCallId,
-      context_hash: ctx.cache.keyFor({
-        kind: 'record_memory',
-        memoryId: memory.frontmatter.id,
-        scope,
-      }),
+      agent_session_id: meta.agent_session_id,
+      parent_agent_session_id: meta.parent_agent_session_id,
+      subagent_class: meta.subagent_class,
+      tool_call_id: meta.tool_call_id,
+      context_hash: cacheKey,
       repo_root_detected: repoRootDetected,
       scopes_queried: [scope],
       rules_returned: [
@@ -159,15 +171,12 @@ export default {
           scope,
           domain: memory.frontmatter.kind,
           score: 1,
-          reason: writeResult.alreadyExisted ? 'existing' : 'written',
+          reason: alreadyExisted ? 'existing' : 'written',
         },
       ],
       overridden_global_ids: [],
       latency_ms: Math.round(performance.now() - startedAt),
       cache_hit: false,
-      scope_fallback: scopeFallback ?? null,
-      memory_path: writeResult.path,
-      memory_already_existed: writeResult.alreadyExisted,
       downstream_apply_event_id: null,
       downstream_commit_sha: null,
       downstream_violations: null,
@@ -176,13 +185,14 @@ export default {
 
     return {
       id: memory.frontmatter.id,
-      path: writeResult.path,
+      path: targetPath,
       scope,
-      ...(scopeFallback ? { scope_fallback: scopeFallback } : {}),
-      already_existed: writeResult.alreadyExisted,
+      already_existed: alreadyExisted,
     }
   },
 }
+
+export default tool
 
 class ValidationError extends Error {
   readonly code = 'VALIDATION_ERROR'
@@ -190,4 +200,59 @@ class ValidationError extends Error {
     super(message)
     this.name = 'ValidationError'
   }
+}
+
+/**
+ * Serialize a {frontmatter, body} pair to the on-disk markdown shape:
+ *   ---
+ *   key: value
+ *   key2:
+ *     - one
+ *     - two
+ *   ---
+ *   <body>
+ *
+ * Hand-rolled to avoid pulling in `yaml` for the Phase 1.0 scaffold —
+ * matches the YAML-ish parser in src/server/corpus/reader.ts.
+ */
+function serializeMemory(memory: {
+  frontmatter: Record<string, unknown>
+  body: string
+}): string {
+  const lines: string[] = ['---']
+  for (const [key, value] of Object.entries(memory.frontmatter)) {
+    if (value === undefined || value === null) continue
+    if (Array.isArray(value)) {
+      lines.push(`${key}:`)
+      for (const item of value) {
+        lines.push(`  - ${formatScalar(item)}`)
+      }
+    } else if (typeof value === 'object') {
+      lines.push(`${key}:`)
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        lines.push(`  ${k}: ${formatScalar(v)}`)
+      }
+    } else {
+      lines.push(`${key}: ${formatScalar(value)}`)
+    }
+  }
+  lines.push('---', '', memory.body)
+  return lines.join('\n')
+}
+
+function formatScalar(v: unknown): string {
+  if (v === null || v === undefined) return 'null'
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  if (typeof v === 'number') return String(v)
+  // Quote strings that look like other YAML types or have special chars.
+  const s = String(v)
+  if (
+    /^(true|false|null|~|\d+(\.\d+)?)$/.test(s) ||
+    /[:#\[\]{},&*!|>'"%@`]/.test(s) ||
+    s.startsWith(' ') ||
+    s.endsWith(' ')
+  ) {
+    return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  }
+  return s
 }

@@ -9,7 +9,6 @@
 // `score()` is the only thing that needs to change.
 
 import type {
-  AppliesWhenT,
   Memory,
   Rule,
   Scope,

@@ -19,8 +19,16 @@
  * severity, scope }. Always emits a single 'check' audit event.
  */
 
+import { readFileSync } from 'node:fs'
 import { z } from 'zod'
-import type { ToolContext, Rule, AuditEvent } from '../server/main.js'
+import type {
+  ToolContext,
+  ToolCallMeta,
+  McpTool,
+  Rule,
+  AuditEvent,
+} from '../server/main.js'
+import { detectRepoRoot } from '../server/scope/detect.js'
 
 const baseInputSchema = z.object({
   path: z.string().optional(),
@@ -53,6 +61,11 @@ export interface Violation {
   domain: string
 }
 
+interface CheckFileOutput {
+  violations: Violation[]
+  skipped_checks: Array<{ rule_id: string; reason: string }>
+}
+
 const DESCRIPTION =
   'Run the corpus\'s executable rule checks against a file and return violations. ' +
   'v1.0 supports only regex checks; ast-grep checks are reserved for a future ' +
@@ -60,7 +73,7 @@ const DESCRIPTION =
   'path inside the projects mount, OR `inline_contents` to check buffer contents ' +
   'directly (avoids macOS Docker virtiofs propagation lag). One audit event per call.'
 
-export default {
+const tool: McpTool<unknown, CheckFileOutput> = {
   name: 'check_file',
   description: DESCRIPTION,
   inputSchema: baseInputSchema.shape,
@@ -68,10 +81,8 @@ export default {
   handler: async (
     rawInput: unknown,
     ctx: ToolContext,
-  ): Promise<{
-    violations: Violation[]
-    skipped_checks: Array<{ rule_id: string; reason: string }>
-  }> => {
+    meta: ToolCallMeta,
+  ): Promise<CheckFileOutput> => {
     const startedAt = performance.now()
     const input: Input = inputSchema.parse(rawInput)
     const { path, inline_contents, inline_path_hint, context, scope } = input
@@ -90,7 +101,7 @@ export default {
       context?.file_paths ??
       (path ? [path] : inline_path_hint ? [inline_path_hint] : [])
     const repoRootDetected = detectionPaths.length
-      ? ctx.repoRootDetector(detectionPaths)
+      ? detectRepoRoot(detectionPaths)
       : null
 
     const scopesQueried: Array<'global' | 'repo'> = []
@@ -103,21 +114,21 @@ export default {
       if (repoRootDetected) scopesQueried.push('repo')
     }
 
-    // Read file contents if `path` was provided. The corpusReader handles
-    // host→container path translation and the read-only mount.
+    // Read file contents if `path` was provided. The host→container path
+    // translation lives at the container mount layer; here we treat `path`
+    // as a path readable by this process.
     const filePath = path ?? inline_path_hint ?? '<inline>'
     const contents =
       inline_contents !== undefined
         ? inline_contents
-        : await ctx.corpusReader.readProjectFile(path!)
+        : readFileSync(path!, 'utf8')
 
-    // Collect every rule that has a `check` block, across the queried scopes,
-    // and filter by applies_when.paths if present.
-    const candidateRules = await ctx.corpusReader.fetchCheckableRules({
-      scopes: scopesQueried,
-      repoRoot: repoRootDetected,
-      targetPath: filePath,
-    })
+    // Collect every rule that has a `check` block, then filter to the
+    // scopes we're querying (the reader returns rules tagged with .scope).
+    const allCheckable: Rule[] = ctx.corpusReader.fetchCheckableRules()
+    const candidateRules = allCheckable.filter((r: Rule) =>
+      scopesQueried.includes(r.scope),
+    )
 
     // Honor v4.1 override semantics: repo wins on id collision.
     const overriddenIds: string[] = []
@@ -146,13 +157,14 @@ export default {
         // Walk per-line to recover line numbers and bounded evidence snippets.
         const lines = contents.split(/\r?\n/)
         for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]!
           const lineRe = new RegExp(check.pattern)
-          if (lineRe.test(lines[i]!)) {
+          if (lineRe.test(line)) {
             violations.push({
               rule_id: rule.id,
               scope: rule.scope,
               line: i + 1,
-              evidence: truncate(lines[i]!, 240),
+              evidence: truncate(line, 240),
               severity: rule.severity,
               domain: rule.domain,
             })
@@ -173,19 +185,23 @@ export default {
       }
     }
 
+    const contextHash = ctx.cache.keyFor({
+      file_paths: [filePath],
+      intent: 'check_file',
+      symbols: [],
+      recent_diff: '',
+      repo_root_detected: repoRootDetected,
+      scopes_queried: scopesQueried,
+    })
+
     const event: AuditEvent = {
       event_type: 'check',
       ts: new Date().toISOString(),
-      agent_session_id: ctx.session?.agentSessionId ?? null,
-      parent_agent_session_id: ctx.session?.parentAgentSessionId ?? null,
-      subagent_class: ctx.session?.subagentClass ?? null,
-      tool_call_id: ctx.toolCallId,
-      context_hash: ctx.cache.keyFor({
-        kind: 'check_file',
-        filePath,
-        scope,
-        repoRoot: repoRootDetected,
-      }),
+      agent_session_id: meta.agent_session_id,
+      parent_agent_session_id: meta.parent_agent_session_id,
+      subagent_class: meta.subagent_class,
+      tool_call_id: meta.tool_call_id,
+      context_hash: contextHash,
       repo_root_detected: repoRootDetected,
       scopes_queried: scopesQueried,
       rules_returned: violations.map((v) => ({
@@ -199,8 +215,6 @@ export default {
       overridden_global_ids: overriddenIds,
       latency_ms: Math.round(performance.now() - startedAt),
       cache_hit: false,
-      check_file_path: filePath,
-      check_skipped: skipped,
       downstream_apply_event_id: null,
       downstream_commit_sha: null,
       downstream_violations: null,
@@ -210,6 +224,8 @@ export default {
     return { violations, skipped_checks: skipped }
   },
 }
+
+export default tool
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s

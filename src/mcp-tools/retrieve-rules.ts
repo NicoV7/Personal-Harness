@@ -8,7 +8,15 @@
  */
 
 import { z } from 'zod'
-import type { ToolContext, Rule, AuditEvent } from '../server/main.js'
+import type {
+  ToolContext,
+  ToolCallMeta,
+  McpTool,
+  Rule,
+  AuditEvent,
+} from '../server/main.js'
+import { detectRepoRoot } from '../server/scope/detect.js'
+import type { CachedRetrieval } from '../server/cache/context-hash.js'
 
 const contextSchema = z
   .object({
@@ -32,19 +40,23 @@ const DESCRIPTION =
   'current code context. Prefer retrieve_context if you also want skills and ' +
   'memories in a single call.'
 
-export default {
+const tool: McpTool<unknown, Rule[]> = {
   name: 'retrieve_rules',
   description: DESCRIPTION,
   inputSchema: inputSchema.shape,
 
-  handler: async (rawInput: unknown, ctx: ToolContext): Promise<Rule[]> => {
+  handler: async (
+    rawInput: unknown,
+    ctx: ToolContext,
+    meta: ToolCallMeta,
+  ): Promise<Rule[]> => {
     const startedAt = performance.now()
     const input: Input = inputSchema.parse(rawInput)
     const { context, top_k, scope } = input
 
     const repoRootDetected =
       context.file_paths && context.file_paths.length > 0
-        ? ctx.repoRootDetector(context.file_paths)
+        ? detectRepoRoot(context.file_paths)
         : null
 
     const scopesQueried: Array<'global' | 'repo'> = []
@@ -58,34 +70,46 @@ export default {
     }
 
     const cacheKey = ctx.cache.keyFor({
-      context,
-      scope,
-      repoRoot: repoRootDetected,
-      kind: 'retrieve_rules',
-      topK: top_k,
+      file_paths: context.file_paths ?? [],
+      intent: context.intent ?? '',
+      symbols: context.symbols ?? [],
+      recent_diff: context.recent_diff ?? '',
+      repo_root_detected: repoRootDetected,
+      scopes_queried: scopesQueried,
     })
 
-    let rules = ctx.cache.get(cacheKey) as Rule[] | undefined
-    let cacheHit = !!rules
+    const cached = ctx.cache.get<Rule[]>(cacheKey)
+    let rules: Rule[]
+    let cacheHit = false
     const overriddenIds: string[] = []
 
-    if (!rules) {
-      const candidates = await ctx.corpusReader.fetchRules({
-        context,
-        scopes: scopesQueried,
-        repoRoot: repoRootDetected,
-      })
+    if (cached) {
+      rules = cached.payload
+      cacheHit = true
+    } else {
+      const intent = context.intent ?? ''
+      const candidates: Rule[] = []
+      for (const s of scopesQueried) {
+        candidates.push(...ctx.corpusReader.fetchRules({ scope: s, intent, top_k }))
+      }
       rules = mergeWithOverride(candidates, overriddenIds).slice(0, top_k)
-      ctx.cache.set(cacheKey, rules)
+      const envelope: CachedRetrieval<Rule[]> = {
+        payload: rules,
+        scopes_queried: scopesQueried,
+        repo_root_detected: repoRootDetected,
+        overridden_global_ids: overriddenIds,
+        cached_at_ms: Date.now(),
+      }
+      ctx.cache.set(cacheKey, envelope)
     }
 
     const event: AuditEvent = {
       event_type: 'retrieve',
       ts: new Date().toISOString(),
-      agent_session_id: ctx.session?.agentSessionId ?? null,
-      parent_agent_session_id: ctx.session?.parentAgentSessionId ?? null,
-      subagent_class: ctx.session?.subagentClass ?? null,
-      tool_call_id: ctx.toolCallId,
+      agent_session_id: meta.agent_session_id,
+      parent_agent_session_id: meta.parent_agent_session_id,
+      subagent_class: meta.subagent_class,
+      tool_call_id: meta.tool_call_id,
       context_hash: cacheKey,
       repo_root_detected: repoRootDetected,
       scopes_queried: scopesQueried,
@@ -94,8 +118,8 @@ export default {
         kind: 'rule' as const,
         scope: r.scope,
         domain: r.domain,
-        score: r.score ?? 0,
-        reason: r.reason ?? 'merged',
+        score: 0,
+        reason: 'merged',
       })),
       overridden_global_ids: overriddenIds,
       latency_ms: Math.round(performance.now() - startedAt),
@@ -109,6 +133,8 @@ export default {
     return rules
   },
 }
+
+export default tool
 
 function mergeWithOverride<T extends { id: string; scope: 'global' | 'repo' }>(
   items: T[],
