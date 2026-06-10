@@ -11,5 +11,22 @@
 // path here, do not add an env-gated fallback. The CLI shim talks HTTP too.
 
 import { startServer } from './server/main.js';
+import retrieveContext from './mcp-tools/retrieve-context.js';
+import retrieveRules from './mcp-tools/retrieve-rules.js';
+import retrieveSkills from './mcp-tools/retrieve-skills.js';
+import retrieveMemories from './mcp-tools/retrieve-memories.js';
+import checkFile from './mcp-tools/check-file.js';
+import explainRule from './mcp-tools/explain-rule.js';
+import recordMemory from './mcp-tools/record-memory.js';
 
-await startServer();
+await startServer({
+  tools: [
+    retrieveContext,
+    retrieveRules,
+    retrieveSkills,
+    retrieveMemories,
+    checkFile,
+    explainRule,
+    recordMemory,
+  ],
+});

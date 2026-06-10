@@ -11,7 +11,14 @@
  */
 
 import { z } from 'zod'
-import type { ToolContext, Rule, AuditEvent } from '../server/main.js'
+import type {
+  ToolContext,
+  ToolCallMeta,
+  McpTool,
+  Rule,
+  AuditEvent,
+} from '../server/main.js'
+import { detectRepoRoot } from '../server/scope/detect.js'
 
 const inputSchema = z.object({
   rule_id: z
@@ -35,18 +42,22 @@ const DESCRIPTION =
   'anti-patterns, etc.). Honors the v4.1 scoping override: if a repo version of ' +
   'the rule exists, returns that; otherwise returns the global version.'
 
-export default {
+const tool: McpTool<unknown, Rule> = {
   name: 'explain_rule',
   description: DESCRIPTION,
   inputSchema: inputSchema.shape,
 
-  handler: async (rawInput: unknown, ctx: ToolContext): Promise<Rule> => {
+  handler: async (
+    rawInput: unknown,
+    ctx: ToolContext,
+    meta: ToolCallMeta,
+  ): Promise<Rule> => {
     const startedAt = performance.now()
     const input: Input = inputSchema.parse(rawInput)
     const { rule_id, context, scope } = input
 
     const repoRootDetected = context?.file_paths?.length
-      ? ctx.repoRootDetector(context.file_paths)
+      ? detectRepoRoot(context.file_paths)
       : null
 
     const scopesQueried: Array<'global' | 'repo'> = []
@@ -59,13 +70,9 @@ export default {
       if (repoRootDetected) scopesQueried.push('repo')
     }
 
-    // Ask the corpus reader for the rule body across scopes. The reader
-    // returns the repo version preferentially if both exist.
-    const rule = await ctx.corpusReader.fetchRuleById({
-      ruleId: rule_id,
-      scopes: scopesQueried,
-      repoRoot: repoRootDetected,
-    })
+    // Ask the corpus reader for the rule body. The reader returns the
+    // repo version preferentially when both scopes are loaded.
+    const rule = ctx.corpusReader.fetchRuleById(rule_id)
 
     if (!rule) {
       throw new RuleNotFoundError(
@@ -73,34 +80,34 @@ export default {
       )
     }
 
-    // If both scopes were searched and the returned rule is repo, record the
-    // global override (if a global with same id exists) for audit visibility.
-    const overriddenIds: string[] = []
-    if (
+    // We can't cheaply check whether a global version was overridden without
+    // a second lookup; fetchRuleById's contract already collapses the
+    // override and returns the surviving rule. If the surviving rule is
+    // repo-scoped and we queried global too, record the override.
+    const overriddenIds: string[] =
       scopesQueried.includes('global') &&
       scopesQueried.includes('repo') &&
       rule.scope === 'repo'
-    ) {
-      const globalExists = await ctx.corpusReader.ruleExists({
-        ruleId: rule_id,
-        scope: 'global',
-      })
-      if (globalExists) overriddenIds.push(rule_id)
-    }
+        ? [rule.id]
+        : []
+
+    const cacheKey = ctx.cache.keyFor({
+      file_paths: context?.file_paths ?? [],
+      intent: `explain_rule:${rule_id}`,
+      symbols: [],
+      recent_diff: '',
+      repo_root_detected: repoRootDetected,
+      scopes_queried: scopesQueried,
+    })
 
     const event: AuditEvent = {
       event_type: 'explain',
       ts: new Date().toISOString(),
-      agent_session_id: ctx.session?.agentSessionId ?? null,
-      parent_agent_session_id: ctx.session?.parentAgentSessionId ?? null,
-      subagent_class: ctx.session?.subagentClass ?? null,
-      tool_call_id: ctx.toolCallId,
-      context_hash: ctx.cache.keyFor({
-        kind: 'explain_rule',
-        ruleId: rule_id,
-        scope,
-        repoRoot: repoRootDetected,
-      }),
+      agent_session_id: meta.agent_session_id,
+      parent_agent_session_id: meta.parent_agent_session_id,
+      subagent_class: meta.subagent_class,
+      tool_call_id: meta.tool_call_id,
+      context_hash: cacheKey,
       repo_root_detected: repoRootDetected,
       scopes_queried: scopesQueried,
       rules_returned: [
@@ -125,6 +132,8 @@ export default {
     return rule
   },
 }
+
+export default tool
 
 class RuleNotFoundError extends Error {
   readonly code = 'RULE_NOT_FOUND'

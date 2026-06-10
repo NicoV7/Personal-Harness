@@ -4,7 +4,7 @@
  * One call, one audit event, three lists. Aggregates rules + skills + memories
  * for the agent's current intent. Implements the v4.1 scoping algorithm:
  *
- *   1. Detect repo root from context.file_paths[0] (via ctx.repoRootDetector).
+ *   1. Detect repo root from context.file_paths (via detectRepoRoot).
  *   2. Check context_hash cache (keyed by scope + repo_root_detected per the
  *      `.betterai/STANDARDS/observability/context-hash-includes-scope` rule).
  *   3. On miss: ask corpusReader for global + repo candidates of each kind,
@@ -22,11 +22,15 @@
 import { z } from 'zod'
 import type {
   ToolContext,
+  ToolCallMeta,
+  McpTool,
   Rule,
   Skill,
   Memory,
   AuditEvent,
 } from '../server/main.js'
+import { detectRepoRoot } from '../server/scope/detect.js'
+import type { CachedRetrieval } from '../server/cache/context-hash.js'
 
 const contextSchema = z
   .object({
@@ -63,7 +67,7 @@ const DESCRIPTION =
   'One call, one audit event, three lists. Cheaper than calling ' +
   'retrieve_rules/retrieve_skills/retrieve_memories separately.'
 
-export default {
+const tool: McpTool<unknown, RetrieveContextOutput> = {
   name: 'retrieve_context',
   description: DESCRIPTION,
   inputSchema: inputSchema.shape,
@@ -71,6 +75,7 @@ export default {
   handler: async (
     rawInput: unknown,
     ctx: ToolContext,
+    meta: ToolCallMeta,
   ): Promise<RetrieveContextOutput> => {
     const startedAt = performance.now()
     const input: Input = inputSchema.parse(rawInput)
@@ -80,12 +85,11 @@ export default {
     //    path was passed or the path is not inside a git repo with .betterai/.
     const repoRootDetected =
       context.file_paths && context.file_paths.length > 0
-        ? ctx.repoRootDetector(context.file_paths)
+        ? detectRepoRoot(context.file_paths)
         : null
 
     // Which corpora we actually query depends on `scope` and whether a repo
-    // root was detected. `scope=repo` with no repo root = global-only fallback,
-    // logged via scopes_queried so the audit reader can see it.
+    // root was detected.
     const scopesQueried: Array<'global' | 'repo'> = []
     if (scope === 'global') {
       scopesQueried.push('global')
@@ -99,57 +103,49 @@ export default {
     }
 
     // 2. Cache key includes scope + repo_root per the
-    //    context-hash-includes-scope rule. ctx.cache hashes context + these.
+    //    context-hash-includes-scope rule.
     const cacheKey = ctx.cache.keyFor({
-      context,
-      scope,
-      repoRoot: repoRootDetected,
-      kind: 'retrieve_context',
-      topKPerKind: top_k_per_kind,
+      file_paths: context.file_paths ?? [],
+      intent: context.intent ?? '',
+      symbols: context.symbols ?? [],
+      recent_diff: context.recent_diff ?? '',
+      repo_root_detected: repoRootDetected,
+      scopes_queried: scopesQueried,
     })
 
-    const cached = ctx.cache.get(cacheKey) as
-      | (RetrieveContextOutput & { __cached?: true })
-      | undefined
+    const cached = ctx.cache.get<RetrieveContextOutput>(cacheKey)
 
     let result: RetrieveContextOutput
     let cacheHit = false
 
     if (cached) {
-      result = cached
+      result = cached.payload
       cacheHit = true
     } else {
       // 3. Fetch candidates from each kind across the queried scopes.
       const reader = ctx.corpusReader
+      const intent = context.intent ?? ''
 
-      const [rulesAll, skillsAll, memoriesAll] = await Promise.all([
-        reader.fetchRules({
-          context,
-          scopes: scopesQueried,
-          repoRoot: repoRootDetected,
-        }),
-        reader.fetchSkills({
-          context,
-          scopes: scopesQueried,
-          repoRoot: repoRootDetected,
-        }),
-        reader.fetchMemories({
-          context,
-          scopes: scopesQueried,
-          repoRoot: repoRootDetected,
-        }),
-      ])
+      const rulesAll: Rule[] = []
+      const skillsAll: Skill[] = []
+      const memoriesAll: Memory[] = []
+
+      for (const s of scopesQueried) {
+        rulesAll.push(...reader.fetchRules({ scope: s, intent, top_k: top_k_per_kind }))
+        skillsAll.push(...reader.fetchSkills({ scope: s, intent, top_k: top_k_per_kind }))
+        memoriesAll.push(...reader.fetchMemories({ scope: s, intent, top_k: top_k_per_kind }))
+      }
 
       const overriddenIds: string[] = []
       const rules = mergeWithOverride(rulesAll, overriddenIds).slice(
         0,
         top_k_per_kind,
       )
-      const skills = mergeWithOverride(skillsAll, overriddenIds).slice(
+      const skills = mergeWithOverride(skillsAll, []).slice(
         0,
         top_k_per_kind,
       )
-      const memories = mergeWithOverride(memoriesAll, overriddenIds).slice(
+      const memories = mergeWithOverride(memoriesAll, []).slice(
         0,
         top_k_per_kind,
       )
@@ -163,17 +159,24 @@ export default {
         scopes_queried: scopesQueried,
       }
 
-      ctx.cache.set(cacheKey, result)
+      const envelope: CachedRetrieval<RetrieveContextOutput> = {
+        payload: result,
+        scopes_queried: scopesQueried,
+        repo_root_detected: repoRootDetected,
+        overridden_global_ids: overriddenIds,
+        cached_at_ms: Date.now(),
+      }
+      ctx.cache.set(cacheKey, envelope)
     }
 
     // 4. Emit ONE audit event (not three — that's the whole point of this tool).
     const event: AuditEvent = {
       event_type: 'retrieve',
       ts: new Date().toISOString(),
-      agent_session_id: ctx.session?.agentSessionId ?? null,
-      parent_agent_session_id: ctx.session?.parentAgentSessionId ?? null,
-      subagent_class: ctx.session?.subagentClass ?? null,
-      tool_call_id: ctx.toolCallId,
+      agent_session_id: meta.agent_session_id,
+      parent_agent_session_id: meta.parent_agent_session_id,
+      subagent_class: meta.subagent_class,
+      tool_call_id: meta.tool_call_id,
       context_hash: cacheKey,
       repo_root_detected: result.repo_root_detected,
       scopes_queried: result.scopes_queried,
@@ -183,24 +186,24 @@ export default {
           kind: 'rule' as const,
           scope: r.scope,
           domain: r.domain,
-          score: r.score ?? 0,
-          reason: r.reason ?? 'merged',
+          score: 0,
+          reason: 'merged',
         })),
         ...result.skills.map((s) => ({
           id: s.id,
           kind: 'skill' as const,
           scope: s.scope,
           domain: s.category,
-          score: s.score ?? 0,
-          reason: s.reason ?? 'merged',
+          score: 0,
+          reason: 'merged',
         })),
         ...result.memories.map((m) => ({
           id: m.id,
           kind: 'memory' as const,
           scope: m.scope,
           domain: m.kind,
-          score: m.score ?? 0,
-          reason: m.reason ?? 'merged',
+          score: 0,
+          reason: 'merged',
         })),
       ],
       overridden_global_ids: result.overridden_global_ids,
@@ -215,6 +218,8 @@ export default {
     return result
   },
 }
+
+export default tool
 
 /**
  * Apply the id-collision override rule across global+repo candidate lists.
