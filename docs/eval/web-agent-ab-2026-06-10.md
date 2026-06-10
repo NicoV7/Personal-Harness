@@ -31,3 +31,7 @@ Implications for the harness / reliability goal:
 ## Verdict
 
 Proceed past the Phase-0 checkpoint to the architecture refactor (constants/config/errors layers → capability-flat restructure). Re-run this A/B after the restructure (Phase 3) and diff `eval-output/` + the audit trail against this baseline to prove the harness still works.
+
+## Phase 3 — post-restructure re-verification (2026-06-10)
+
+After the capability-flat `src/` restructure, the retrieval probe was re-run against the rebuilt server. `retrieve_context` over MCP returned **byte-identical rule ids** to this baseline for both tasks (portfolio: alt-text-required, no-inline-styles, responsive-viewport-meta, verify-uncertain-facts; archmap: + semantic-html-default). Combined with typecheck 0 / 198 tests / validate OK / clean boot, this confirms the restructure preserved behavior AND the harness still works. The generative site arms were not re-built (LLM output is non-deterministic, so byte-diffing sites carries no signal — retrieval-equivalence is the rigorous check).

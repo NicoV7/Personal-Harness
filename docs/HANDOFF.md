@@ -1,6 +1,25 @@
-# BetterAI — Handoff (2026-06-10, post-Wave-6)
+# BetterAI — Handoff (2026-06-10, post-Wave-6 + architecture refactor)
 
 > Supersedes the 2026-06-09 post-Wave-5 handoff. If you put this down for a week and came back, this doc is the single page that gets you executing again.
+
+---
+
+## Architecture refactor + eval (2026-06-10, latest) — DONE
+
+`src/` was reorganized **capability-flat** (the `src/server/` prefix is gone). Top level is now: `app.ts index.ts audit/ auth/ cache/ constants/ contracts/ corpus/ errors/ retrieval/ scope/ transport/ mcp-tools/ cli/ __tests__/ _meta-validators/`. `server/main.ts`→`app.ts`, `server/retrieve/`→`retrieval/`. **typecheck 0, 198 tests, validate OK** throughout.
+
+New cross-cutting layers landed first (behavior-preserving):
+- **`src/constants/`** `{cache,transport,scope,audit,retrieval,cli}.ts` — all policy literals lifted to named consts (the no-magic-numbers rule); `main.ts`/`runWeeklyGate` duplication killed.
+- **env/config** — single `EnvSchema` in `contracts/env.ts` (the duplicate in `main.ts` removed); **dotenv loader** in `src/index.ts` via Node `process.loadEnvFile` (never overrides real env); **`.env.example`** added; `.env` gitignored.
+- **`src/errors/`** — `BetterAIError` base + factories + `BAI-*` codes (the typed-errors rule's required layer, which hadn't existed); scattered error classes migrated, behavior preserved. Codes documented in `docs/DEBUGGING.md`.
+
+**Harness proven by an eval, not just unit tests.** A control-vs-treatment web-agent A/B (`eval-output/{non-harness,harness}/`, report `docs/eval/web-agent-ab-2026-06-10.md`) had agents build a portfolio + architecture-map site from the same prompt; treatment = BetterAI corpus retrieved over MCP + the taste-skill design library. **Treatment won (design 9 vs 6)**; retrieval verified over MCP with audit evidence. Post-restructure, the retrieval probe returns **byte-identical rule ids** to the pre-restructure baseline — the harness survived the move.
+
+**Key finding (drives eval design):** on a frontier base model, the corpus's *generic hygiene rules* (semantic-html, alt-text, no-inline-styles, viewport) show ~0 lift — the base model already follows them. Corpus value is in project-specific rules the base model violates. New **base-model-violating fixtures** at `src/__tests__/fixtures/task-evals/regression/` (add-mcp-tool, add-tunable-timeout, negative-no-rule-applies) target exactly those.
+
+**Bugs fixed en route:** (1) the domain-router YAML parser was dead — every request fell back to default domains, so path/intent routing never worked (`29b7771`); (2) the cache/router magic-number duplication from the review (`b12d7a2`). The review's two criticals (check-file path traversal, record-memory frontmatter injection) remain **open/report-only** — see `docs/reviews/review-fleet-2026-06-10.md`.
+
+Commits: `b12d7a2` (cache constants) → `4a2eb1f` (review report) → `29b7771` (web rules + router fix) → `90d2d76` (eval baseline) → `92e34c7` (layers) → `50a7fa2` (eval fixtures) → capability-flat restructure → this handoff.
 
 ---
 
