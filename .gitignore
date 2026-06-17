@@ -1,6 +1,7 @@
 .claude/settings.local.json
 .claude/.edit-baks/
 .claude/worktrees/
+.codex/
 node_modules/
 *.log
 .env
