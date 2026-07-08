@@ -123,6 +123,17 @@ export async function retrieveByIntent(input, ctx) {
 - **Bumping major version.** Adding a tool is additive; major bump signals a
   breaking change to clients and triggers their gate logic unnecessarily.
 
+## Python port note
+
+The Python backend (`BetterAI-Python/backend/`) follows the same per-tool
+shape with Python idioms: each tool lives at `app/mcp/<tool>/` with
+`schema.py` (pydantic `BaseModel` input, described fields) and `handler.py`
+(`NAME`, `DESCRIPTION`, `async def handle(input, deps, meta, on_progress)`).
+Registration is centralized in `app/mcp/registry.py` (alphabetical, 5-tool
+surface); errors are raised via `app.errors.Errors` factories, never inline
+dicts; every handler records an audit event through `deps.audit`. The TS
+steps above remain authoritative for `src/` until switchover.
+
 ## Related rules
 
 - `no-catch-all-exception-masking` — let typed errors propagate; don't

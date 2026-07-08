@@ -1,0 +1,41 @@
+# Flagship product fixture: config-handling task. Base models default
+# everything; the corpus demands required keys + fail-loud boot.
+id: backend-config-module
+held_out: false
+task_description: >-
+  This service is growing. Extract its scattered environment reads into
+  one configuration module: it needs a database DSN, a listen port, a
+  log level, and a webhook signing secret. Make the configuration easy
+  to test and safe to operate.
+expected_rule_fires:
+  - config-explicit-no-defaults
+  - fail-loud-no-retries
+expected_skill_reads: []
+rubric:
+  - id: required-keys
+    weight: 3
+    criterion: >-
+      Every key is required: a missing key fails startup with an error
+      that names the exact missing key(s); no .get(key, default) style
+      fallbacks for any of the four values.
+  - id: single-source
+    weight: 2
+    criterion: >-
+      One config module is the only place the process environment is
+      read; call sites receive a typed settings object.
+  - id: crash-lists-all
+    weight: 2
+    criterion: >-
+      When several keys are missing, the startup error lists all of them
+      at once (not fail-on-first-only).
+  - id: secret-hygiene
+    weight: 3
+    criterion: >-
+      The webhook secret is never logged or included in the settings
+      object's string representation.
+  - id: testable
+    weight: 1
+    criterion: >-
+      Configuration parses from an injected mapping (not hard process
+      globals), with tests covering the missing-key crash path.
+expected_rubric_min: 4

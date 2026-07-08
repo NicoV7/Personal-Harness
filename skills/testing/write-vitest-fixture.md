@@ -122,6 +122,20 @@ describe("retrieveByIntent", () => {
 - **Generic `it()` names.** `it("works")` tells you nothing when CI fails
   at 2am. Names should state the assertion.
 
+## Python port note
+
+The Python backend (`BetterAI-Python/backend/`) carries the same test
+contract in pytest form: tests live feature-first under
+`tests/<feature>/{unit,integration,e2e,evals}/`; each test keeps literal
+`# arrange` / `# act` / `# assert` comments; mocks happen only at system
+boundaries (httpx transport, redis client, psycopg connection, docker
+socket) with `tmp_path` for filesystem fixtures instead of a tmpdir helper;
+container-backed tests are marked `@pytest.mark.integration` and
+live-server tests `@pytest.mark.e2e`. Audit assertions read the JSONL file
+the same way — parse lines, strip timestamps, assert `event_type` and
+payload keys. The Vitest guidance above remains authoritative for `src/`
+until switchover.
+
 ## Related rules
 
 - `no-catch-all-exception-masking` — tests should let typed errors bubble

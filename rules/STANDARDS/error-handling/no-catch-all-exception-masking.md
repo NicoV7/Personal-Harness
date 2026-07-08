@@ -14,6 +14,7 @@ check:
 related:
   - no-defensive-optional-chains
   - no-redundant-internal-validation
+  - fail-loud-no-retries
 source: RULES.md §7, §4.1
 ---
 
@@ -29,6 +30,8 @@ The anti-pattern produces three failure modes:
 - **Suppressed bugs.** A connection error, a syntax error in `renderDashboard`, and a genuine missing-user condition all become the same `{}` — logs go silent, dashboards stay green, the bug ships.
 - **Zombie state.** Code downstream of the empty fallback runs against bad data, often producing a *second* bug far from the root cause.
 - **Lost telemetry.** The error tracker (Sentry, Datadog, console) never sees the exception. Future you cannot debug what you cannot see.
+
+Defensive retries and backoff loops are a masking variant of the same anti-pattern: re-invoking a failed call instead of surfacing the error hides the failure exactly like returning `{}` does, just slower. A retry wrapper around a permanent failure (bad credentials, wrong host, missing table) converts a 1-second crash into a multi-second hang with the same outcome and less signal. Retrying is only legitimate under the narrow conditions in `fail-loud-no-retries` — a documented-flaky third-party boundary, explicitly bounded, logged per attempt; everywhere else, one attempt and a typed error.
 
 ## Why it matters
 

@@ -1,0 +1,182 @@
+"""BetterAI server wiring: FastMCP Streamable-HTTP + hook routes, one port.
+
+ONE transport, ever: `mcp.http_app(path="/mcp")` mounted in a Starlette
+app (rule no-stdio-mcp-transport). Bearer verification stays entirely in
+app/auth.py — this module only installs the middleware. Boot indexes the
+corpus exactly once and keeps serving on failure: boot crashes are
+reserved for config errors (BAI-1xx); infra outages surface per-query as
+typed BAI-6xx errors whose message says how to recover.
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from typing import Any
+
+from app.audit import AuditLog
+from app.auth import BearerAuth, BearerAuthMiddleware
+from app.corpus.reader import CorpusReader
+from app.deps import CallMeta, Deps, ProgressFn
+from app.errors import BetterAIError
+from app.hooks.state import InMemorySessionStore
+from app.mcp import registry
+from app.settings import Settings
+
+logger = logging.getLogger("betterai")
+
+_PROGRESS_STAGES = {"results": 1.0}
+
+
+def build_deps(settings: Settings) -> Deps:
+    # Imported here so importing this module never constructs the redis/
+    # openai clients (tests import app.server for wiring only).
+    from app.retrieval import Retrieval
+
+    return Deps(
+        settings=settings,
+        audit=AuditLog(settings.audit_path),
+        corpus=CorpusReader(settings.corpus_root),
+        pipeline=Retrieval(settings),
+        store=InMemorySessionStore(),
+    )
+
+
+def build_mcp(deps: Deps) -> Any:
+    from fastmcp import Context, FastMCP
+
+    mcp = FastMCP("betterai")
+    for schema_module, handler_module in registry.tool_modules():
+        tool_fn = _tool_fn(schema_module.INPUT_MODEL, handler_module, deps, Context)
+        mcp.tool(tool_fn, name=handler_module.NAME, description=handler_module.DESCRIPTION)
+    return mcp
+
+
+def build_app(settings: Settings) -> Any:
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+
+    from app.hooks.routes import hook_routes
+
+    deps = build_deps(settings)
+    mcp = build_mcp(deps)
+    http_app = mcp.http_app(path="/mcp")
+
+    async def health(request: Any) -> JSONResponse:
+        return JSONResponse({"status": "ok", "service": "betterai"})
+
+    routes = [
+        Route("/health", health, methods=["GET"]),
+        *hook_routes(deps),
+        Mount("/", app=http_app),
+    ]
+    app = Starlette(routes=routes, lifespan=_lifespan(http_app, deps))
+    return BearerAuthMiddleware(app, BearerAuth(settings, deps.audit))
+
+
+def main() -> None:
+    """Boot: env -> settings -> app -> uvicorn. The ONLY place besides
+    settings.py allowed to touch os.environ."""
+    import uvicorn
+
+    logging.basicConfig(level=logging.INFO)
+    settings = Settings.from_env(os.environ)
+    uvicorn.run(build_app(settings), host=settings.bind_host, port=settings.mcp_port)
+
+
+def _tool_fn(input_model: Any, handler_module: Any, deps: Deps, context_cls: type) -> Any:
+    """Adapt one tool module to a FastMCP function whose signature mirrors
+    INPUT_MODEL's fields, so the client-visible schema stays flat instead
+    of nesting everything under a single 'input' object."""
+
+    async def tool_fn(**kwargs: Any) -> dict:
+        ctx = kwargs.pop("ctx")
+        payload = input_model(**kwargs)
+        return await handler_module.handle(
+            payload, deps, _call_meta(ctx), on_progress=_progress_fn(ctx)
+        )
+
+    tool_fn.__name__ = handler_module.NAME
+    tool_fn.__doc__ = handler_module.DESCRIPTION
+    tool_fn.__signature__ = _signature(input_model, context_cls)  # type: ignore[attr-defined]
+    tool_fn.__annotations__ = _annotations(input_model, context_cls)
+    return tool_fn
+
+
+def _signature(input_model: Any, context_cls: type) -> inspect.Signature:
+    parameters = [
+        inspect.Parameter(
+            name,
+            inspect.Parameter.KEYWORD_ONLY,
+            default=inspect.Parameter.empty if field.is_required() else field.default,
+            annotation=field.annotation,
+        )
+        for name, field in input_model.model_fields.items()
+    ]
+    parameters.append(
+        inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=context_cls)
+    )
+    return inspect.Signature(parameters, return_annotation=dict)
+
+
+def _annotations(input_model: Any, context_cls: type) -> dict:
+    annotations: dict = {
+        name: field.annotation for name, field in input_model.model_fields.items()
+    }
+    annotations["ctx"] = context_cls
+    annotations["return"] = dict
+    return annotations
+
+
+def _call_meta(ctx: Any) -> CallMeta:
+    """Session identity as far as the transport exposes it. Threading the
+    caller's own agent/parent/subagent ids through MCP request metadata is
+    integration work; until then the MCP session id is the session key the
+    gates share with the hook routes."""
+    return CallMeta(
+        agent_session_id=getattr(ctx, "session_id", None),
+        parent_agent_session_id=None,
+        subagent_class="main",
+        tool_call_id=str(getattr(ctx, "request_id", "")),
+    )
+
+
+def _progress_fn(ctx: Any) -> ProgressFn:
+    async def on_progress(stage: str, payload: dict) -> None:
+        await ctx.report_progress(
+            progress=_PROGRESS_STAGES.get(stage, 0.0), total=3.0
+        )
+        await ctx.info(f"{stage}: {json.dumps(payload, default=str)}")
+
+    return on_progress
+
+
+def _lifespan(http_app: Any, deps: Deps) -> Any:
+    @asynccontextmanager
+    async def lifespan(app: Any) -> Any:
+        await _index_corpus_once(deps)
+        async with http_app.lifespan(app):
+            yield
+
+    return lifespan
+
+
+async def _index_corpus_once(deps: Deps) -> None:
+    """One attempt, loud log, keep serving. No retry loop: the recovery
+    path is `betterai start` + `betterai index`, prompted per query by
+    BAI-601 until the stack is back."""
+    try:
+        summary = await deps.pipeline.index_corpus(deps.corpus.read())
+    except BetterAIError as exc:
+        logger.error(
+            "boot corpus index FAILED [%s]: %s -- queries will fail until "
+            "`betterai index` succeeds",
+            exc.code,
+            exc,
+        )
+        return
+    logger.info("boot corpus index complete: %s", summary)

@@ -2,8 +2,15 @@
 .claude/.edit-baks/
 .claude/worktrees/
 .codex/
+.betterai/
+**/.betterai/token
+**/.betterai/provider.env
+**/.betterai/provider-key
+**/provider.env
+**/provider-key
 node_modules/
 *.log
+eval-output/install-smoke/
 .env
 .env.*
 !.env.example
@@ -13,3 +20,9 @@ node_modules/
 AGENTS.md
 n8nac-config.json
 workflows/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/

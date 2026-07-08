@@ -1,129 +1,74 @@
 # BetterAI
 
-**A Dockerized rule corpus + MCP retrieval service that injects relevant code-quality, design, and maintainability rules into any AI agent's context BEFORE the agent writes or plans code.**
+**A Python MCP harness that injects your skills and rules into any coding
+agent's context in real time — hybrid RAG over Redis, hard gates that
+make consultation deterministic, and a markdown corpus as the source of
+record.**
 
-The corpus is the moat. The container is the install vector. Any MCP-speaking agent (Claude Code, Cursor, Codex CLI, Gemini CLI, claude.ai managed agents) gets the rules for free.
+Any MCP-speaking agent (Claude Code, Codex CLI, Cursor, Gemini CLI) gets
+the corpus for free. Personal toolkit: single user, local-first, no SaaS.
 
-This is a **personal toolkit**. Single user. Local-first. No SaaS.
-
----
-
-## Install in 5 commands
-
-```bash
-# 1. Create the corpus root on the host.
-mkdir -p ~/.betterai/{rules,skills,memories,audit}
-
-# 2. Bootstrap docker-compose.yml + a one-shot install of the seed corpus.
-curl -fsSL https://betterai.dev/install.sh | sh
-
-# 3. Bring up the container (single-arch arm64 in v1.0; multi-arch in v1.5).
-docker compose -f ~/.betterai/docker-compose.yml up -d
-
-# 4. Verify the server is alive and your bearer token is wired up.
-betterai status
-
-# 5. Point Claude Code at the MCP endpoint.
-#    (The install script prints the exact snippet to paste, with the
-#    bearer token interpolated; see docs/DEBUGGING.md if you skipped it.)
-```
-
-Five commands. No npm. No Node version dance. The container ships its own runtime.
-
----
-
-## Your first magical moment
-
-After install, open the welcome task that ships with the seed corpus:
-
-```bash
-betterai welcome
-# Walks you through a single five-minute fixture:
-#   1. Open a contrived bad-code file.
-#   2. Ask Claude Code to refactor it.
-#   3. Watch BetterAI's retrieve_context fire BEFORE Claude writes anything.
-#   4. See the rules show up in Claude's planning output.
-```
-
-This is the moment the system has signal or it doesn't. If the rules don't change Claude's output, the corpus is wrong, not the plumbing — see [docs/DEBUGGING.md](docs/DEBUGGING.md).
-
----
-
-## What's in the corpus
-
-Three artifact kinds, each with its own retrieval call:
-
-- **Rules** — constraints. "Don't catch all exceptions." Read BEFORE writing code.
-- **Skills** — procedures. "How to add a new MCP tool." Read when about to perform a task that matches.
-- **Memories** — episodes. "Last time we tried Theia, here's why we rejected it." Read when planning or debugging matches a prior decision.
-
-Two scopes:
-
-- **GLOBAL** (`~/.betterai/`) — applies to every project you touch from this machine.
-- **REPO** (`<repo-root>/.betterai/`) — ships with the project, gets PR'd like code, survives team handoffs.
-
-The full schema lives in [`rules/_meta/schema.md`](rules/_meta/schema.md). Conflict resolution (rule vs memory, repo vs global) lives in [`rules/_meta/conflict-resolution.md`](rules/_meta/conflict-resolution.md).
-
----
+> The original TypeScript implementation is deprecated and removed; it
+> lives in git history prior to the `feat/python-refocus` branch.
 
 ## How it works
 
 ```
-   Any MCP-speaking agent              betterai-server (Docker)
-   ─────────────────────               ─────────────────────────
-   retrieve_context(context) ───HTTP──▶ domain-router → grep (v1)
-                                        → merge global + repo
-                                        → LRU cache (256/60s)
-                                        → return {rules, skills, memories}
-                              ◀──JSON─── + audit JSONL append
+prompt -> UserPromptSubmit hook -> query_skills (redisvl HybridQuery:
+BM25 + vector, per-aspect) -> skills above the cosine-similarity
+threshold with a keyword match -> get_skill read receipts -> gates keep
+mutating tools denied until the skills are actually read
 ```
 
-A single MCP server binds `127.0.0.1:7777` with a bearer token. Every retrieval is audited to JSONL for replay. The corpus on disk is read-write to the user; the projects mount is read-only to the container. Detection of which `.betterai/` directory ships with the active repo happens by walking up to the nearest `.git/` — see [`docs/design/v4.1-scoping-extension.md`](docs/design/v4.1-scoping-extension.md).
+- **Ingest** (`app/retrieval/ingest.py`): markdown + YAML frontmatter →
+  redisvl vectorizer (OpenRouter, OpenAI-compatible) → write-through
+  Postgres (durable) then Redis (hot hybrid index). Facets (`domain`,
+  `category`, intents) are indexed as tags, BM25 keywords, and an
+  embedded header so phase-specific queries land reliably.
+- **Query** (`app/retrieval/search.py`): one `HybridQuery` per aspect
+  (pass one aspect per sub-problem of your task); selection rule =
+  `cosine similarity >= BETTERAI_SIMILARITY_THRESHOLD` AND keyword
+  match; `top_k` is optional — omitted means read everything relevant.
+- **Tools** (5): `query_skills` · `get_skill` · `edit_skill` ·
+  `list_skills` · `start_container`.
+- **Gates** (4, hook-driven): skill read-gate, retrieval receipt, plan
+  manifest (`## Files to touch` + `justify:` escape hatch), incremental
+  edit budget (`BETTERAI_EDIT_GRANULARITY=function|file|none`).
+- **Fail loud, no defaults**: every config key is required (boot lists
+  what's missing, BAI-120); no retries, no silent fallbacks, no offline
+  mode — errors tell you to run `betterai start`.
 
----
+## Install
 
-## Authoring
+```bash
+git clone https://github.com/NicoV7/Personal-Harness.git && cd Personal-Harness
+./install.sh                      # uv tool install + betterai install
+betterai start                    # compose up: betterai + redis:8.8 + pgvector
+betterai index                    # ingest the corpus
+betterai doctor
+```
 
-The lazy path is `betterai new rule` — it asks two questions and creates the file. The manual path is documented frontmatter-key-by-frontmatter-key in [`docs/AUTHORING.md`](docs/AUTHORING.md).
+Requirements: Docker (compose v2), [uv](https://docs.astral.sh/uv/), an
+OpenRouter API key (written to `~/.betterai/openrouter-key`).
 
-The first thing to read when writing a rule by hand is [`rules/_meta/schema.md`](rules/_meta/schema.md).
+## Development
 
----
+```bash
+uv venv .venv && uv pip install -e ".[dev]"
+.venv/bin/pytest tests -m "not integration and not e2e" -q   # fast gate
+.venv/bin/pytest tests -m integration                        # needs live redis/pg
+```
 
-## Debugging
+Tests are feature-first: `tests/<feature>/{unit,integration,e2e,evals}/`.
 
-When the agent's output looks wrong, the three diagnostics — in this order — are:
+## Layout
 
-1. `betterai status` — is the container alive, is the token wired up, how many rules in each scope.
-2. `betterai why <task> --context <file>` — which rules would have fired for that input.
-3. `betterai replay --since 7d` — weekly digest of what fired vs what was applied.
-
-The full diagnostic loop, the `[BAI-NNN]` error-code table, and the common gotchas live in [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
-
----
-
-## Phase status
-
-The container scaffold is wedge code. The corpus is the part that compounds. See [`docs/IMPLEMENTATION-ROADMAP.html`](docs/IMPLEMENTATION-ROADMAP.html) for the phased plan and current gate status.
-
-In short:
-
-- **Phase 0** — hand-author the 13-rule seed corpus. *Done.*
-- **Phase 1.0** — container + MCP wedge (grep retrieval, regex checks, bearer auth, single-arch arm64). *Wave 3 in flight.*
-- **Phase 1.5** — embeddings, ast-grep, multi-arch, install script, launchd.
-- **Phase 2** — VSCode extension (sidebar, audit webview, diagnostics).
-- **Phase 3** — eval-lift harness (optional, for hard evidence the corpus moves a number).
-
----
-
-## What this is NOT
-
-- Not a product. There is no marketplace, no SaaS, no auth provider.
-- Not a custom IDE. VSCode is the surface; we don't ship our own editor.
-- Not a runtime dependency of any other project. Aether, Aide, GBrain, techdebt: each is a separate world. Cross-pollination via MCP and shared rule files only.
-
----
-
-## License
-
-Personal toolkit. No license declared. Don't redistribute the corpus content; the seed rules encode the author's design opinions.
+```
+app/            server, settings (no defaults), errors (BAI codes),
+                corpus/ (reader, router), retrieval/ (ingest, search, pg),
+                mcp/ (one folder per tool and per gate), hooks/ (event
+                pipeline), installer/, cli.py
+tests/          feature-first suites + product evals (rubric-driven A/B)
+rules/ skills/  the corpus (markdown + YAML frontmatter)
+docs/           proposals, debugging, eval harness design
+```

@@ -1,0 +1,39 @@
+# Flagship product fixture: test-writing task. Targets the user's test
+# conventions that base models do not follow by default: feature-first
+# directory layout, AAA structure, no emojis.
+id: write-feature-tests
+held_out: false
+task_description: >-
+  Write tests for the payment client module you can find in this repo
+  (creation, charge success, charge failure, config errors). Organize
+  them properly for a growing codebase.
+expected_rule_fires:
+  - tests-by-feature-then-type
+  - no-emojis-in-tests
+expected_skill_reads: []
+rubric:
+  - id: feature-first-layout
+    weight: 3
+    criterion: >-
+      Tests live under a feature directory with a type subdirectory
+      (e.g. tests/payments/unit/), not in a flat tests/ dir and not in a
+      type-first tree (tests/unit/payments/).
+  - id: aaa-structure
+    weight: 2
+    criterion: >-
+      Each test reads as arrange-act-assert (comments or clear visual
+      blocks); no multi-behavior mega-tests.
+  - id: no-emojis
+    weight: 2
+    criterion: >-
+      Zero emojis anywhere in test files, names, comments, or output.
+  - id: boundary-mocks-only
+    weight: 2
+    criterion: >-
+      Only the HTTP boundary is mocked/faked; internal functions of the
+      module under test are not patched.
+  - id: order-independent
+    weight: 1
+    criterion: >-
+      Tests share no mutable state and pass in any order.
+expected_rubric_min: 4

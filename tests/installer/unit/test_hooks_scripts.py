@@ -1,0 +1,43 @@
+"""Host hook scripts: all five events, executable, fail-open on
+transport errors, block only on an explicit server answer."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.installer.hooks_scripts import HOOK_NAMES, write_hook_scripts
+
+
+def test_writes_all_five_hook_scripts_including_post_tool_use(tmp_path: Path) -> None:
+    # arrange / act
+    written = write_hook_scripts(str(tmp_path))
+    # assert
+    names = sorted(Path(path).name for path in written)
+    assert names == sorted(HOOK_NAMES)
+    assert "post-tool-use" in names
+    for path in written:
+        assert (Path(path).stat().st_mode & 0o777) == 0o755
+
+
+def test_scripts_fail_open_and_exit_two_only_on_block(tmp_path: Path) -> None:
+    # arrange / act
+    write_hook_scripts(str(tmp_path))
+    # assert
+    for name in HOOK_NAMES:
+        body = (tmp_path / ".betterai" / "hooks" / name).read_text()
+        assert "|| true" in body, f"{name} must fail open on transport errors"
+        assert '"block":true' in body and "exit 2" in body
+        assert f"http://127.0.0.1:7777/hooks/{name}" in body
+        assert "Authorization: Bearer" in body
+
+
+def test_scripts_read_token_at_runtime_never_embed_it(tmp_path: Path) -> None:
+    # arrange
+    token_dir = tmp_path / ".betterai"
+    token_dir.mkdir(parents=True)
+    (token_dir / "token").write_text("fixture-secret-token-value\n")
+    # act
+    written = write_hook_scripts(str(tmp_path))
+    # assert
+    for path in written:
+        assert "fixture-secret-token-value" not in Path(path).read_text()

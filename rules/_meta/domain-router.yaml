@@ -45,6 +45,15 @@ routers:
       - if_match: "**/*.css"
         domains: [frontend, accessibility]
 
+      # Test surface: anything under tests/ or matching *.test.* pulls the
+      # testing domain (feature-first layout, no emojis in tests) plus
+      # maintainability, because test code is held to the same bar as
+      # product code.
+      - if_match: "tests/**"
+        domains: [testing, maintainability]
+      - if_match: "**/*.test.*"
+        domains: [testing, maintainability]
+
   # -----------------------------------------------------------------------
   # 2. Intent-keyword router
   #    Looks at the agent's stated intent (plan/design/implement/debug/...)
@@ -53,10 +62,17 @@ routers:
   - id: by-intent-keyword
     rules:
       # Planning / design / scaffolding: methodology rules (Surgical
-      # Changes, Iterate Don't Boil-the-Ocean) and structural guidance
-      # matter most before any code is written.
-      - if_intent_contains: ["plan", "design", "scaffold"]
+      # Changes, Iterate Don't Boil-the-Ocean, touch-set manifests,
+      # existing-tools search) and structural guidance matter most before
+      # any code is written.
+      - if_intent_contains: ["plan", "design", "scaffold", "propose", "architecture"]
         domains: [methodology, structure, maintainability]
+
+      # Testing work: writing or fixing tests pulls the testing domain
+      # (feature-first layout, no emojis) and error-handling, because
+      # assertions are where failure semantics get locked in.
+      - if_intent_contains: ["test", "fixture", "eval"]
+        domains: [testing, error-handling]
 
       # Frontend / web work: pull frontend craft + accessibility domains so
       # website/portfolio/UI tasks get semantic-html, no-inline-styles,
