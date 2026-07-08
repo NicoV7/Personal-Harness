@@ -1,0 +1,99 @@
+"""Retrieval-receipt gate: mutating tools require query_skills this turn."""
+
+from __future__ import annotations
+
+from app.hooks.events import PreToolUse
+from app.mcp import registry
+from app.mcp.retrieval_receipt_gate import store as receipt_store
+from app.mcp.retrieval_receipt_gate.gate import HANDLERS
+from tests.mcp.gate_helpers import audit_events, make_deps
+
+SESSION = "sess-receipt"
+
+
+def test_mutating_tool_denied_without_receipt(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+
+    # act
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Write"), deps
+    )
+
+    # assert
+    assert decision is not None and decision.deny is True
+    assert decision.error_code == "BAI-701"
+    assert "query_skills" in decision.reason
+
+
+def test_mutating_tool_allowed_after_receipt(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+    receipt_store.mark_retrieved(deps.store, SESSION)
+
+    # act
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Write"), deps
+    )
+
+    # assert
+    assert decision is None
+
+
+def test_non_mutating_tool_never_gated(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+
+    # act
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Read"), deps
+    )
+
+    # assert
+    assert decision is None
+
+
+def test_null_session_allows(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+
+    # act
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=None, tool_name="Write"), deps
+    )
+
+    # assert
+    assert decision is None
+
+
+def test_new_turn_clears_receipt(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+    receipt_store.mark_retrieved(deps.store, SESSION)
+
+    # act
+    deps.store.begin_turn(SESSION, registry.TURN_NAMESPACES)
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Edit"), deps
+    )
+
+    # assert
+    assert receipt_store.has_retrieved(deps.store, SESSION) is False
+    assert decision is not None and decision.deny is True
+
+
+def test_denial_writes_gate_denial_audit_event(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path)
+
+    # act
+    HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="MultiEdit"), deps
+    )
+
+    # assert
+    events = audit_events(deps)
+    assert len(events) == 1
+    assert events[0]["event_type"] == "gate_denial"
+    assert events[0]["payload"]["gate"] == "retrieval_receipt_gate"
+    assert events[0]["payload"]["denied_tool"] == "MultiEdit"

@@ -1,0 +1,44 @@
+# Flagship product fixture: realistic backend task that base models
+# routinely solve with retries/backoff/defaulted config — exactly the
+# behaviors the corpus forbids. Positive lift here = the harness works.
+id: backend-http-client
+held_out: false
+task_description: >-
+  Add an HTTP client module for a third-party payment provider
+  ("Payflow") to this project. It needs: configuration for base URL and
+  API key, a function to create a charge, a function to fetch a charge
+  by id, and error handling suitable for production. Wire nothing else;
+  just the client module.
+expected_rule_fires:
+  - fail-loud-no-retries
+  - config-explicit-no-defaults
+  - typed-errors-from-errors-layer
+expected_skill_reads: []
+rubric:
+  - id: no-retry-loop
+    weight: 3
+    criterion: >-
+      The client makes exactly one attempt per call; no retry loop, no
+      backoff, no "try again" wrappers around the HTTP calls.
+  - id: config-required
+    weight: 3
+    criterion: >-
+      Base URL and API key are required configuration: absence fails
+      loudly at construction/boot naming the missing key; neither has a
+      baked-in default value.
+  - id: typed-error-surface
+    weight: 2
+    criterion: >-
+      Non-2xx responses and transport failures surface as typed errors
+      (distinct classes or stable codes), not bare exceptions with
+      ad-hoc strings and not None/sentinel returns.
+  - id: no-secret-leak
+    weight: 3
+    criterion: >-
+      The API key never appears in logs, error messages, or repr output.
+  - id: boundary-validation
+    weight: 1
+    criterion: >-
+      Charge inputs are validated once at the client boundary (amount,
+      currency); internal helpers trust validated values.
+expected_rubric_min: 4

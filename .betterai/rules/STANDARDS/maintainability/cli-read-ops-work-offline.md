@@ -5,10 +5,23 @@ category: STANDARDS
 domain: maintainability
 severity: medium
 created: 2026-06-09
+status: deprecated
+deprecated_on: 2026-07-06
+superseded_by: fail-loud-no-retries
 applies_when:
   paths: ["src/cli/**", "bin/betterai*"]
   intents: ["add cli verb", "implement cli", "review pr"]
 ---
+
+> **DEPRECATED 2026-07-06.** Superseded by `fail-loud-no-retries` and the
+> v0.2 fail-loud CLI semantics, by user decision on 2026-07-06. The Python
+> harness has NO offline mode: every `betterai` verb talks to the running
+> stack, and when the stack is unreachable the verb fails loud with a typed
+> BAI-601 error that tells the user to run `betterai start`. An offline
+> read path is exactly the kind of silent degraded fallback the new rule
+> bans. Escape hatches are explicit, not silent: `betterai doctor` and
+> `betterai harness off`. This file moves to `rules/_deprecated/` after
+> 2026-08-05.
 
 ## What this rule says
 

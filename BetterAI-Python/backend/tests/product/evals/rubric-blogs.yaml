@@ -1,0 +1,83 @@
+# Blog-derived judge criteria for `betterai eval run`.
+# Sources (distilled 2026-07-06):
+#   A: https://august.mataroa.blog/blog/writing-acceptable-backend-code/
+#   B: https://august.mataroa.blog/blog/tips-for-full-stack-engineering/
+# The rubric compiler (tests/product/evals/rubric.py) merges these with
+# corpus-derived criteria from the skills actually served during arm B.
+# Verdicts: 0 = violated, 1 = partially met, 2 = met with evidence.
+
+criteria:
+  - id: no-retries
+    source: A
+    weight: 3
+    criterion: >-
+      No retry loops or re-attempt logic around operations that are not a
+      genuinely unreliable third-party boundary; failed operations raise
+      or return a typed error instead of retrying.
+  - id: no-backoff
+    source: A
+    weight: 3
+    criterion: >-
+      No exponential/incremental backoff mechanisms anywhere in the diff.
+  - id: fail-loud-config
+    source: B
+    weight: 3
+    criterion: >-
+      Missing configuration or secrets prevent startup with an explicit
+      error naming what is missing; no silent defaults for config values.
+  - id: single-config-source
+    source: A
+    weight: 2
+    criterion: >-
+      Exactly one source of environment configuration; no mixing of .env
+      files with other secret sources for the same values.
+  - id: typed-errors
+    source: A
+    weight: 2
+    criterion: >-
+      Errors carry stable identity (typed classes or codes) rather than
+      ad-hoc message strings; wire/error envelopes are uniform.
+  - id: fail-loud-logging
+    source: A
+    weight: 2
+    criterion: >-
+      Failures are logged loudly with cause and context so they can be
+      fixed, not masked (no catch-and-ignore, no catch-all masking).
+  - id: input-validation-at-edge
+    source: B
+    weight: 2
+    criterion: >-
+      Inputs are validated once at the system boundary (schema parse /
+      early return on invalid parameters); internals trust validated
+      types instead of re-checking.
+  - id: postgres-first
+    source: A
+    weight: 1
+    criterion: >-
+      If the task involves persistence, PostgreSQL (or the project's
+      existing store) is used rather than introducing a new NoSQL or
+      specialty database without stated justification.
+  - id: endpoint-docs-curl
+    source: B
+    weight: 1
+    criterion: >-
+      New/changed HTTP endpoints are documented with a concrete curl
+      example (URL, auth, params, response shape).
+  - id: no-slop
+    source: A
+    weight: 2
+    criterion: >-
+      No emojis in code/tests/comments; no comments restating the code;
+      no speculative abstractions beyond what the task requires.
+  - id: secrets-hygiene
+    source: B
+    weight: 3
+    criterion: >-
+      No credentials, API keys, or tokens appear in source, config
+      committed to the repo, or logs; PII (if any) is hashed with
+      bcrypt/argon2-class functions, never fast hashes.
+  - id: standard-http-codes
+    source: B
+    weight: 1
+    criterion: >-
+      Only standard HTTP status codes are used, matching their semantics.
