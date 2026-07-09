@@ -1,6 +1,6 @@
 [project]
 name = "betterai"
-version = "0.2.0"
+version = "0.3.0"
 description = "BetterAI harness: MCP server injecting corpus skills/rules into coding agents with hybrid RAG and hard gates"
 requires-python = ">=3.12"
 # Pins per docs/proposals/engine-components.md (P0-R2, verified 2026-07-06).

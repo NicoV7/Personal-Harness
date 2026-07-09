@@ -26,7 +26,7 @@ from app.installer.compose import render_compose
 from app.installer.hooks_scripts import write_hook_scripts
 from app.installer.install_env import betterai_root, install_env_values
 from app.installer.memory_provider import memory_provider_wiring
-from app.mcp_client import mcp_call, server_get
+from app.mcp_client import mcp_call, server_get, server_post
 from app.settings import REQUIRED_KEYS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -178,10 +178,8 @@ def check(file: str = typer.Argument(...)) -> None:
 
 @app.command()
 def index() -> None:
-    # The 5-tool MCP surface has no index tool and the reindex endpoint is
-    # not in the frozen cross-module contracts; wiring it up is the
-    # integration agent's call. Honest and loud until then.
-    _not_implemented("index", "server reindex endpoint not in the frozen contracts yet")
+    """Re-read the corpus and rebuild the redis/pg index via POST /reindex."""
+    typer.echo(json.dumps(_fail_loud(lambda: server_post(_user_home(), "/reindex", {}))))
 
 
 @app.command("export-memories")

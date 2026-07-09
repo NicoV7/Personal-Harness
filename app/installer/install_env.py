@@ -32,7 +32,7 @@ from pathlib import Path
 from app.errors import Errors
 from app.settings import REQUIRED_KEYS
 
-BETTERAI_IMAGE = "ghcr.io/nicov7/personal-harness-py:0.2.0"
+BETTERAI_IMAGE = "ghcr.io/nicov7/personal-harness-py:0.3.0"
 SUPERGATEWAY_IMAGE = "supercorp/supergateway:3.4.3"
 REDIS_IMAGE = "redis:8.8"
 POSTGRES_IMAGE = "pgvector/pgvector:0.8.4-pg17-bookworm"

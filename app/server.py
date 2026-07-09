@@ -71,11 +71,31 @@ def build_app(settings: Settings) -> Any:
 
     routes = [
         Route("/health", health, methods=["GET"]),
+        *ops_routes(deps),
         *hook_routes(deps),
         Mount("/", app=http_app),
     ]
     app = Starlette(routes=routes, lifespan=_lifespan(http_app, deps))
     return BearerAuthMiddleware(app, BearerAuth(settings, deps.audit))
+
+
+def ops_routes(deps: Deps) -> list:
+    """Operator endpoints (bearer-protected like everything but /health).
+
+    These are NOT MCP tools on purpose: the 5-tool agent surface stays
+    frozen; reindex/ingest are `betterai` CLI operations."""
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def reindex(request: Any) -> JSONResponse:
+        try:
+            summary = await deps.pipeline.index_corpus(deps.corpus.read())
+        except BetterAIError as exc:
+            return JSONResponse(exc.envelope(), status_code=503)
+        deps.audit.record("reindex", summary)
+        return JSONResponse(summary)
+
+    return [Route("/reindex", reindex, methods=["POST"])]
 
 
 def main() -> None:
