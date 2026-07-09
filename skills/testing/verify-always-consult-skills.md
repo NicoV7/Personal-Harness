@@ -6,14 +6,14 @@ when_to_use: |
   Use when changing prompt hooks, read receipts, client adapters, MCP
   instructions, or install smoke behavior that controls whether agents retrieve
   and read BetterAI skills on every prompt.
-steps_count: 6
+steps_count: 7
 estimated_minutes: 10
 applies_when:
   paths:
-    - src/hooks/**
-    - src/runtime/read-receipts.ts
-    - src/cli/adapters.ts
-    - src/cli/eval.ts
+    - app/hooks/**
+    - app/mcp/*_gate/**
+    - app/installer/adapters.py
+    - app/evals/**
     - install.sh
   intents:
     - always consult skills
@@ -49,7 +49,12 @@ tools before loading the matched BetterAI skills for the current prompt.
 5. Confirm `Stop` blocks once when required skills remain unread, then avoids an
    infinite loop on repeated stop attempts; in active edit-budget modes the
    Stop hook never blocks, because stopping to converse is the point.
-6. Run the focused hook/adapter/eval tests and the full install smoke when
+6. Confirm the Claude adapter's auto-allowed permissions
+   (`permissions.allow` entries for `query_skills`/`get_skill`/
+   `list_skills`) cover ONLY read-only tools — auto-accept removes the
+   permission prompt, never the gates; mutating tools stay prompted and
+   gated.
+7. Run the focused hook/adapter/eval tests and the full install smoke when
    changing installer or client integration behavior.
 
 ## What good looks like
