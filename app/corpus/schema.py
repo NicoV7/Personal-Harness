@@ -72,6 +72,8 @@ class Artifact(BaseModel):
     created: str | None = None
     scope: Scope = "global"
     source_path: str | None = None
+    source_url: str | None = None
+    source_ref: str | None = None
     content_hash: str | None = None
     body: str = ""
 
