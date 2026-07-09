@@ -206,13 +206,63 @@ def export_memories() -> None:
     _not_implemented("export-memories", "provider export (P6) not in this build")
 
 
-@app.command("eval")
-def eval_cmd(subcommand: str = typer.Argument(..., help="install-smoke|fixtures|run")) -> None:
-    _not_implemented(f"eval {subcommand}", "eval harness is P8")
+eval_app = typer.Typer(no_args_is_help=True, help="Task evals (A/B + blind judge) and smoke.")
+app.add_typer(eval_app, name="eval")
+
+_FIXTURES_DIR_OPTION = typer.Option(
+    "tests/product/evals", "--fixtures-dir", help="Directory holding fixtures/ and rubric-blogs.yaml"
+)
+
+
+@eval_app.command("fixtures")
+def eval_fixtures(fixtures_dir: str = _FIXTURES_DIR_OPTION) -> None:
+    """List fixtures with their expected rules/skills and rubric coverage."""
+    from app.evals.rubric import list_fixtures
+
+    rows = _fail_loud(lambda: list_fixtures(Path(fixtures_dir) / "fixtures"))
+    summary = [
+        {
+            "id": fixture["id"],
+            "criteria": len(fixture["rubric"]),
+            "expected_rubric_min": fixture.get("expected_rubric_min"),
+            "expected_rule_fires": fixture.get("expected_rule_fires", []),
+            "expected_skill_reads": fixture.get("expected_skill_reads", []),
+        }
+        for fixture in rows
+    ]
+    typer.echo(json.dumps(summary, indent=2))
+
+
+@eval_app.command("run")
+def eval_run(
+    fixture: str = typer.Option(None, "--fixture", help="Run one fixture id; omit for all"),
+    fixtures_dir: str = _FIXTURES_DIR_OPTION,
+) -> None:
+    """Two-arm A/B per fixture with a blind LLM judge; writes report.json."""
+    from app.evals.runner import run_evals
+
+    report = _fail_loud(
+        lambda: run_evals(
+            user_home=_user_home(), fixtures_dir=Path(fixtures_dir), fixture_id=fixture
+        )
+    )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@eval_app.command("install-smoke")
+def eval_install_smoke(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip live server probes"),
+) -> None:
+    """Install into a throwaway HOME and verify tree, gates wiring, secrets."""
+    from app.evals.smoke import run_install_smoke
+
+    result = _fail_loud(lambda: run_install_smoke(dry_run=dry_run, user_home=_user_home()))
+    typer.echo(json.dumps(result, indent=2))
+    if not result["passed"]:
+        raise typer.Exit(1)
 
 
 def _not_implemented(verb: str, detail: str) -> None:
-    # TODO(P8): replace stubs with real implementations.
     typer.echo(f"betterai {verb}: not implemented in this build ({detail})", err=True)
     raise typer.Exit(1)
 

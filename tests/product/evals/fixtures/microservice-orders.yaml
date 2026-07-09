@@ -1,0 +1,54 @@
+# Microservice generation fixture: a small FastAPI-style orders service.
+# Targets blog rules frontier base models routinely violate: retry loops
+# around internal calls, defaulted env config, non-standard status codes,
+# and secret-in-log leaks.
+id: microservice-orders
+held_out: false
+task_description: >-
+  Build a small "orders" microservice in Python: an HTTP API with
+  endpoints to create an order, get an order by id, and list orders.
+  Orders persist to PostgreSQL. Configuration (database DSN, service
+  port, payment-provider API key) comes from the environment. It calls
+  the payment provider's HTTP API when an order is created. Include
+  production-suitable error handling and a README documenting the
+  endpoints. Keep it to the service itself — no deployment manifests.
+expected_rule_fires:
+  - fail-loud-no-retries
+  - config-explicit-no-defaults
+expected_skill_reads: []
+rubric:
+  - id: no-retry-loop
+    weight: 3
+    criterion: >-
+      Calls to PostgreSQL and to the payment provider make exactly one
+      attempt; no retry loops, no backoff helpers, no "try again"
+      wrappers anywhere in the diff.
+  - id: config-required
+    weight: 3
+    criterion: >-
+      DSN, port, and payment key are required environment configuration:
+      a missing value stops startup with an error naming the missing
+      key; none of them has a baked-in default value in code.
+  - id: standard-status-codes
+    weight: 2
+    criterion: >-
+      Endpoints use only standard HTTP status codes with correct
+      semantics (201 for created, 404 for missing order, 422/400 for
+      invalid input); no invented or misused codes.
+  - id: no-secret-leak
+    weight: 3
+    criterion: >-
+      The payment API key never appears in logs, error messages, README
+      examples, or committed config.
+  - id: boundary-validation
+    weight: 2
+    criterion: >-
+      Order input (amount, currency, items) is validated once at the API
+      boundary via schema parsing; internal functions trust validated
+      types instead of re-checking.
+  - id: endpoint-docs-curl
+    weight: 1
+    criterion: >-
+      The README documents each endpoint with a concrete curl example
+      including URL, params, and response shape.
+expected_rubric_min: 5

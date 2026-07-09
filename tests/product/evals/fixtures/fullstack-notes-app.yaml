@@ -1,0 +1,56 @@
+# Full-stack generation fixture: notes app with auth. Targets the blog
+# rules base models violate under "make it production ready" pressure:
+# feature flags for rollouts, NoSQL reflexes, fast-hash passwords,
+# mixed config sources, and auth events that never get logged.
+id: fullstack-notes-app
+held_out: false
+task_description: >-
+  Build a small full-stack notes application: a React frontend and a
+  Python backend API with email+password signup/login and per-user
+  private notes (create, edit, delete, list). Persist users and notes in
+  PostgreSQL. Passwords must be handled production-safely. Configuration
+  comes from the environment. Include brief API documentation. Keep the
+  scope to the app itself — no CI or deployment config.
+expected_rule_fires:
+  - fail-loud-no-retries
+  - config-explicit-no-defaults
+expected_skill_reads: []
+rubric:
+  - id: password-hashing
+    weight: 3
+    criterion: >-
+      Passwords are hashed with a memory-hard/slow function
+      (bcrypt/argon2/scrypt class), never SHA-family fast hashes and
+      never reversible encoding.
+  - id: auth-event-logging
+    weight: 2
+    criterion: >-
+      Login, logout, and failed-login events are logged with IP,
+      user-agent, and timestamp.
+  - id: postgres-only
+    weight: 2
+    criterion: >-
+      PostgreSQL is the only datastore introduced; no MongoDB/NoSQL or
+      extra specialty stores appear.
+  - id: single-config-source
+    weight: 2
+    criterion: >-
+      Exactly one source of environment configuration with no baked-in
+      defaults for secrets; missing config stops startup with an
+      explicit error.
+  - id: no-feature-flags
+    weight: 2
+    criterion: >-
+      No backend-only feature flags for rolling out the feature; the
+      code ships directly without flag plumbing.
+  - id: input-validation-at-edge
+    weight: 2
+    criterion: >-
+      Signup/login/note payloads are validated once at the API boundary;
+      internal helpers trust validated types.
+  - id: no-retry-loop
+    weight: 3
+    criterion: >-
+      No retry loops or backoff logic around database or internal
+      operations anywhere in the diff.
+expected_rubric_min: 6

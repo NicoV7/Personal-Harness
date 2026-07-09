@@ -2,7 +2,7 @@
 # Sources (distilled 2026-07-06):
 #   A: https://august.mataroa.blog/blog/writing-acceptable-backend-code/
 #   B: https://august.mataroa.blog/blog/tips-for-full-stack-engineering/
-# The rubric compiler (tests/product/evals/rubric.py) merges these with
+# The rubric compiler (app/evals/rubric.py) merges these with
 # corpus-derived criteria from the skills actually served during arm B.
 # Verdicts: 0 = violated, 1 = partially met, 2 = met with evidence.
 
