@@ -43,6 +43,7 @@ def perform_install(
     judge_model: str,
     openrouter_key_file: str,
     run_client_exec: bool,
+    prompt_improver_model: str = "",
 ) -> str:
     """Write the full install tree under <user_home>/.betterai."""
     root = Path(betterai_root(user_home))
@@ -54,6 +55,7 @@ def perform_install(
         user_home,
         overrides={
             "BETTERAI_OPENROUTER_AGENT_MODEL": judge_model,
+            "BETTERAI_PROMPT_IMPROVER_MODEL": prompt_improver_model,
             "BETTERAI_EDIT_GRANULARITY": granularity,
             "BETTERAI_MEMORY_PROVIDER": memory_provider,
         },
@@ -77,6 +79,11 @@ def install(
     openrouter_key_file: str = typer.Option(
         ..., "--openrouter-key-file", prompt="Path to a file containing your OpenRouter API key"
     ),
+    prompt_improver_model: str = typer.Option(
+        "",
+        "--prompt-improver-model",
+        help="OpenRouter model for prompt expansion; empty reuses the judge model, 'off' disables",
+    ),
 ) -> None:
     """Write dirs, token, .env, compose, hooks, bridge, and client adapters."""
     root = _fail_loud(
@@ -88,6 +95,7 @@ def install(
             judge_model=judge_model,
             openrouter_key_file=openrouter_key_file,
             run_client_exec=os.environ.get("BETTERAI_SKIP_CLIENT_EXEC") != "1",
+            prompt_improver_model=prompt_improver_model,
         )
     )
     typer.echo(f"betterai install: ready at {root}")

@@ -30,6 +30,7 @@ def build_settings(**overrides) -> Settings:
         openrouter_api_key_file="/secrets/openrouter-key",
         openrouter_embedding_model="openai/text-embedding-3-small",
         openrouter_agent_model="openai/gpt-test",
+        prompt_improver_model="off",
         embedding_dim=EMBEDDING_DIM,
         hybrid_fusion="linear",
         hybrid_alpha=0.7,

@@ -19,8 +19,13 @@ from app.deps import Deps
 from app.errors import BetterAIError
 from app.hooks.events import HookDecision, PostToolUse, PreToolUse, SessionEnd, Stop, UserPromptSubmit
 from app.mcp import registry
+from app.mcp.plan_manifest_gate import store as manifest_store
+from app.mcp.plan_manifest_gate.gate import mutated_paths, written_content
+from app.mcp.plan_manifest_gate.parser import parse_files_to_touch
 from app.mcp.read_gate import store as read_store
 from app.mcp.retrieval_receipt_gate import store as receipt_store
+from app.openrouter import make_chat_client
+from app.retrieval.expand import Expansion, expand_prompt, expansion_enabled
 
 # The forced skill that only applies while an edit budget is active
 # (plan decisions 7/8: edit-incrementally is injected only when
@@ -82,6 +87,7 @@ def hook_routes(deps: Deps) -> list[Route]:
             tool_response=_dict_field(body, "tool_response", "toolResponse"),
         )
         decision = chain.run(event, deps)
+        plan_context = await _surface_plan_skills(deps, event)
         return JSONResponse(
             {
                 "ok": True,
@@ -89,7 +95,9 @@ def hook_routes(deps: Deps) -> list[Route]:
                 "tool_name": tool_name,
                 "hookSpecificOutput": {
                     "hookEventName": "PostToolUse",
-                    "additionalContext": decision.additional_context,
+                    "additionalContext": _join_warnings(
+                        decision.additional_context, plan_context
+                    ),
                 },
             }
         )
@@ -184,20 +192,84 @@ async def _retrieve_required(
     apply because the corpus is local.
     """
     forced_ids, forced_warning = _forced_skill_ids(deps)
+    expansion, expansion_warning = _expand(deps, prompt)
     try:
-        results = await deps.pipeline.query(intent=prompt)
+        results = await deps.pipeline.query(
+            intent=prompt,
+            aspects=expansion.aspects or None,
+            file_paths=expansion.file_paths or None,
+            symbols=expansion.symbols or None,
+        )
     except BetterAIError as error:
         warning = _join_warnings(
             f"BetterAI retrieval FAILED [{error.code}]: {error}. "
             "Mutating tools stay gated until query_skills succeeds.",
             forced_warning,
+            expansion_warning,
         )
         return forced_ids, [], warning
     artifacts = [getattr(result, "artifact", result) for result in results]
     skills = [a for a in artifacts if getattr(a, "artifact_type", "skill") == "skill"]
     ids = [skill.id for skill in skills]
     ids += [forced for forced in forced_ids if forced not in ids]
-    return ids, [_skill_summary(skill) for skill in skills], forced_warning
+    summaries = [_skill_summary(skill) for skill in skills]
+    return ids, summaries, _join_warnings(forced_warning, expansion_warning)
+
+
+def _expand(deps: Deps, prompt: str) -> tuple[Expansion, str | None]:
+    """Prompt-improver step: an empty Expansion plus a visible warning on
+    failure — expansion enhances retrieval, it never gates it."""
+    if not prompt or not expansion_enabled(deps.settings):
+        return Expansion(), None
+    try:
+        return expand_prompt(prompt, deps.settings, make_chat_client(deps.settings)), None
+    except BetterAIError as error:
+        return Expansion(), (
+            f"BetterAI prompt expansion FAILED [{error.code}]: {error}. "
+            "Retrieval used the raw prompt only."
+        )
+
+
+async def _surface_plan_skills(deps: Deps, event: PostToolUse) -> str | None:
+    """Plan-mode skill surfacing: when the agent writes a plan file, run
+    one extra retrieval over the plan's headings and '## Files to touch'
+    paths and add the matched skills to this session's required reads."""
+    if not event.session_id or event.tool_name not in registry.MUTATING_TOOL_NAMES:
+        return None
+    plan_paths = [
+        path
+        for path in mutated_paths(event.tool_input)
+        if manifest_store.matches_plan_glob(path, deps.settings.plan_glob)
+    ]
+    if not plan_paths:
+        return None
+    content = written_content(event.tool_input)
+    headings = [
+        line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")
+    ]
+    manifest = parse_files_to_touch(content)
+    file_paths = [entry.path for entry in manifest.entries] if manifest.ok else None
+    try:
+        results = await deps.pipeline.query(
+            intent="; ".join(headings[:8]) or "implementation plan",
+            aspects=headings[1:9] or None,
+            file_paths=file_paths,
+        )
+    except BetterAIError as error:
+        return (
+            f"BetterAI plan skill surfacing FAILED [{error.code}]: {error}. "
+            "The plan proceeds without extra skill requirements."
+        )
+    artifacts = [getattr(result, "artifact", result) for result in results]
+    skills = [a for a in artifacts if getattr(a, "artifact_type", "skill") == "skill"]
+    if not skills:
+        return None
+    ids = [skill.id for skill in skills]
+    read_store.mark_required(deps.store, event.session_id, ids)
+    return (
+        "BetterAI plan-mode skills surfaced for this plan: call get_skill for "
+        f"{', '.join(ids)} before implementing."
+    )
 
 
 def _forced_skill_ids(deps: Deps) -> tuple[list[str], str | None]:

@@ -29,6 +29,7 @@ REQUIRED_KEYS = (
     "BETTERAI_OPENROUTER_API_KEY_FILE",
     "BETTERAI_OPENROUTER_EMBEDDING_MODEL",
     "BETTERAI_OPENROUTER_AGENT_MODEL",
+    "BETTERAI_PROMPT_IMPROVER_MODEL",
     "BETTERAI_EMBEDDING_DIM",
     "BETTERAI_HYBRID_FUSION",
     "BETTERAI_HYBRID_ALPHA",
@@ -61,6 +62,7 @@ class Settings:
     openrouter_api_key_file: str
     openrouter_embedding_model: str
     openrouter_agent_model: str
+    prompt_improver_model: str  # "off" disables prompt expansion explicitly
     embedding_dim: int
     hybrid_fusion: str
     hybrid_alpha: float
@@ -90,6 +92,7 @@ class Settings:
             openrouter_api_key_file=env["BETTERAI_OPENROUTER_API_KEY_FILE"],
             openrouter_embedding_model=env["BETTERAI_OPENROUTER_EMBEDDING_MODEL"],
             openrouter_agent_model=env["BETTERAI_OPENROUTER_AGENT_MODEL"],
+            prompt_improver_model=env["BETTERAI_PROMPT_IMPROVER_MODEL"],
             embedding_dim=_int(env, "BETTERAI_EMBEDDING_DIM"),
             hybrid_fusion=_choice(env, "BETTERAI_HYBRID_FUSION", HYBRID_FUSIONS),
             hybrid_alpha=_float(env, "BETTERAI_HYBRID_ALPHA"),

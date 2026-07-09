@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 from openai import OpenAI, OpenAIError
@@ -51,15 +50,6 @@ own words and examples; keep each section 1-4 sentences or a short code/config e
 - skill bodies MUST contain '## When to use this skill' and '## Steps' (numbered).
 - Never invent facts the chunk does not support. Stay faithful to the author's position, \
 including contrarian ones."""
-
-
-def make_distill_client(settings: Settings) -> OpenAI:
-    key_path = Path(settings.openrouter_api_key_file)
-    if not key_path.exists() or not key_path.read_text().strip():
-        raise Errors.token_missing(str(key_path))
-    return OpenAI(
-        base_url=settings.openrouter_base_url, api_key=key_path.read_text().strip()
-    )
 
 
 def distill_chunk(chunk: Chunk, settings: Settings, client: OpenAI) -> list[ArtifactInput]:

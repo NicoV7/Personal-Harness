@@ -17,6 +17,7 @@ FULL_ENV = {
     "BETTERAI_OPENROUTER_API_KEY_FILE": "/data/openrouter-key",
     "BETTERAI_OPENROUTER_EMBEDDING_MODEL": "provider/embed-model",
     "BETTERAI_OPENROUTER_AGENT_MODEL": "provider/judge-model",
+    "BETTERAI_PROMPT_IMPROVER_MODEL": "provider/improver-model",
     "BETTERAI_EMBEDDING_DIM": "384",
     "BETTERAI_HYBRID_FUSION": "rrf",
     "BETTERAI_HYBRID_ALPHA": "0.7",

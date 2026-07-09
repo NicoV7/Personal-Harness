@@ -24,9 +24,10 @@ from app.corpus.writer import (
 from app.deps import Deps
 from app.errors import BetterAIError, Errors
 from app.ingest.chunk import Chunk, chunk_sections
-from app.ingest.distill import distill_chunk, make_distill_client
+from app.ingest.distill import distill_chunk
 from app.ingest.extract import extract_sections
 from app.ingest.fetch import fetch_html
+from app.openrouter import make_chat_client
 
 Distiller = Callable[[Chunk], list[ArtifactInput]]
 
@@ -63,7 +64,7 @@ async def run_ingest(
 
 
 def _default_distiller(deps: Deps) -> Distiller:
-    client = make_distill_client(deps.settings)
+    client = make_chat_client(deps.settings)
     return lambda chunk: distill_chunk(chunk, deps.settings, client)
 
 

@@ -86,6 +86,13 @@ def install_env_values(home: str, overrides: dict | None = None) -> dict[str, st
         "BETTERAI_DOCKER_SOCK": DOCKER_SOCK,
     }
     values.update(overrides or {})
+    if not values.get("BETTERAI_PROMPT_IMPROVER_MODEL"):
+        # Generation-time derivation (sanctioned here, never at runtime):
+        # the prompt improver reuses the judge model unless the installer
+        # was told otherwise; "off" disables expansion explicitly.
+        values["BETTERAI_PROMPT_IMPROVER_MODEL"] = values.get(
+            "BETTERAI_OPENROUTER_AGENT_MODEL", ""
+        )
     missing = [key for key in REQUIRED_KEYS if not values.get(key)]
     if missing:
         raise Errors.config_missing(missing)

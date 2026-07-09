@@ -156,6 +156,7 @@ def full_env(tmp_path: Path, corpus_root: Path) -> dict[str, str]:
         "BETTERAI_PLAN_GLOB": "**/.claude/plans/*.md",
         "BETTERAI_COMPOSE_FILE": str(tmp_path / "docker-compose.yml"),
         "BETTERAI_DOCKER_SOCK": str(tmp_path / "docker.sock"),
+        "BETTERAI_PROMPT_IMPROVER_MODEL": "off",
     }
 
 

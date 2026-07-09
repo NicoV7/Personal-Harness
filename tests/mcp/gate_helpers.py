@@ -33,6 +33,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "openrouter_api_key_file": str(tmp_path / "openrouter.key"),
         "openrouter_embedding_model": "openai/text-embedding-3-small",
         "openrouter_agent_model": "test/judge-model",
+        "prompt_improver_model": "off",
         "embedding_dim": 1536,
         "hybrid_fusion": "rrf",
         "hybrid_alpha": 0.5,
