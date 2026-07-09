@@ -85,6 +85,21 @@ class ContainerOpError(BetterAIError):
     code = "BAI-606"
 
 
+class SourceFetchError(BetterAIError):
+    code = "BAI-607"
+    http_status = 502
+
+
+class DistillError(BetterAIError):
+    code = "BAI-608"
+    http_status = 502
+
+
+class ExpansionError(BetterAIError):
+    code = "BAI-609"
+    http_status = 502
+
+
 class ReadGateError(BetterAIError):
     code = "BAI-700"
     http_status = 403
@@ -163,6 +178,18 @@ class Errors:
     @staticmethod
     def container_op_failed(detail: str) -> ContainerOpError:
         return ContainerOpError(f"container operation failed: {detail}")
+
+    @staticmethod
+    def source_fetch_failed(url: str, detail: str) -> SourceFetchError:
+        return SourceFetchError(f"source fetch failed for {url}: {detail}")
+
+    @staticmethod
+    def distill_failed(chunk_ref: str, detail: str) -> DistillError:
+        return DistillError(f"distillation failed for chunk {chunk_ref}: {detail}")
+
+    @staticmethod
+    def expansion_failed(detail: str) -> ExpansionError:
+        return ExpansionError(f"prompt expansion failed: {detail}")
 
     @staticmethod
     def read_gate_denied(skill_ids: Sequence[str]) -> ReadGateError:

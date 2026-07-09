@@ -95,7 +95,26 @@ def ops_routes(deps: Deps) -> list:
         deps.audit.record("reindex", summary)
         return JSONResponse(summary)
 
-    return [Route("/reindex", reindex, methods=["POST"])]
+    async def ingest(request: Any) -> JSONResponse:
+        from app.ingest.pipeline import run_ingest
+
+        payload = await request.json()
+        url = payload.get("url") if isinstance(payload, dict) else None
+        if not isinstance(url, str) or not url:
+            return JSONResponse(
+                {"error": "BAI-121", "message": "POST /ingest needs {'url': <post url>}"},
+                status_code=400,
+            )
+        try:
+            summary = await run_ingest(url, deps)
+        except BetterAIError as exc:
+            return JSONResponse(exc.envelope(), status_code=exc.http_status)
+        return JSONResponse(summary)
+
+    return [
+        Route("/ingest", ingest, methods=["POST"]),
+        Route("/reindex", reindex, methods=["POST"]),
+    ]
 
 
 def main() -> None:

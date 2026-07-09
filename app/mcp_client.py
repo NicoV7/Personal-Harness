@@ -42,13 +42,13 @@ def server_get(user_home: str, path: str) -> dict:
     return response.json()
 
 
-def server_post(user_home: str, path: str, payload: dict) -> dict:
+def server_post(user_home: str, path: str, payload: dict, *, timeout: float = 120.0) -> dict:
     try:
         response = httpx.post(
             f"{BASE_URL}{path}",
             json=payload,
             headers={"Authorization": f"Bearer {read_token(user_home)}"},
-            timeout=120.0,  # reindex/ingest embed the corpus; slower than a GET
+            timeout=timeout,  # reindex/ingest embed the corpus; slower than a GET
         )
     except httpx.HTTPError as exc:
         raise Errors.stack_unavailable("betterai server", str(exc)) from exc

@@ -182,6 +182,15 @@ def index() -> None:
     typer.echo(json.dumps(_fail_loud(lambda: server_post(_user_home(), "/reindex", {}))))
 
 
+@app.command()
+def ingest(url: str = typer.Argument(..., help="Blog post URL to distill into the corpus")) -> None:
+    """Parse, chunk, and distill a post into corpus rules/skills via POST /ingest."""
+    result = _fail_loud(
+        lambda: server_post(_user_home(), "/ingest", {"url": url}, timeout=600.0)
+    )
+    typer.echo(json.dumps(result))
+
+
 @app.command("export-memories")
 def export_memories() -> None:
     # TODO(P6): emit the selected provider's format via the seam in
