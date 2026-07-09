@@ -71,11 +71,14 @@ def make_vectorizer(settings: Settings) -> OpenAITextVectorizer:
     key = key_path.read_text().strip()
     if not key:
         raise Errors.token_missing(str(key_path))
-    return OpenAITextVectorizer(
-        model=settings.openrouter_embedding_model,
-        api_config={"api_key": key, "base_url": settings.openrouter_base_url},
-        dtype=VECTOR_DTYPE,
-    )
+    try:
+        return OpenAITextVectorizer(
+            model=settings.openrouter_embedding_model,
+            api_config={"api_key": key, "base_url": settings.openrouter_base_url},
+            dtype=VECTOR_DTYPE,
+        )
+    except Exception as exc:  # redisvl probes the provider at construction
+        raise Errors.embedding_provider(str(exc)) from exc
 
 
 def make_index(settings: Settings) -> SearchIndex:
