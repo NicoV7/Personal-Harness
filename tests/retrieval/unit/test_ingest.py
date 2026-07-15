@@ -7,6 +7,7 @@ import pytest
 from app.errors import EmbeddingProviderError
 from app.retrieval import pg
 from app.retrieval.ingest import ingest
+from app.corpus.schema import AppliesWhen
 from tests.retrieval.conftest import build_artifact, build_settings
 
 # The package re-exports the `ingest` function, shadowing the submodule
@@ -172,3 +173,18 @@ class TestEmbedText:
         # assert
         assert text.startswith("domain: error-handling")
         assert artifact.title in text
+
+
+class TestKeywordsText:
+    def test_paths_only_applies_when_yields_facets_without_crashing(self):
+        # arrange: intents absent — only path hints (regression: TypeError)
+        artifact = build_artifact(
+            "paths-only-rule",
+            category="STANDARDS",
+            domain="maintainability",
+            applies_when=AppliesWhen(paths=["**/*.go"]),
+        )
+        # act
+        keywords = ingest_module.keywords_text(artifact)
+        # assert
+        assert keywords == "maintainability STANDARDS"

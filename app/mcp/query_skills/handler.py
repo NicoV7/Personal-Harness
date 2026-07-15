@@ -86,7 +86,9 @@ def _forced_skill_rows(
 ) -> list[dict]:
     rows: list[dict] = []
     for artifact in deps.corpus.read():
-        if artifact.artifact_type != "skill" or not artifact.forced:
+        # Forced RULES union in too: "rules must be followed" is the product
+        # contract, and the hook-side required set already includes them.
+        if not artifact.forced:
             continue
         if artifact.id in already_returned:
             continue
@@ -94,7 +96,7 @@ def _forced_skill_rows(
             continue
         row = {
             "id": artifact.id,
-            "artifact_type": "skill",
+            "artifact_type": artifact.artifact_type,
             "title": artifact.title,
             "score": 1.0,
             "reason": "forced",

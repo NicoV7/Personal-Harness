@@ -115,7 +115,7 @@ def keywords_text(artifact: Artifact) -> str:
 def _intents(artifact: Artifact) -> str:
     if artifact.applies_when is None:
         return ""
-    return " ".join(artifact.applies_when.intents)
+    return " ".join(artifact.applies_when.intents or [])
 
 
 def content_hash(artifact: Artifact) -> str:

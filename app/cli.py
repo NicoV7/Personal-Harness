@@ -201,7 +201,13 @@ def configure(
 @app.command()
 def why(file: str = typer.Argument(...)) -> None:
     """Which rules/skills apply to FILE, via query_skills."""
-    arguments = {"intent": f"rules and skills that apply when editing {file}", "file_paths": [file], "top_k": 8}
+    arguments = {
+        "context": {
+            "intent": f"rules and skills that apply when editing {file}",
+            "file_paths": [file],
+        },
+        "top_k": 8,
+    }
     typer.echo(json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "query_skills", arguments))))
 
 

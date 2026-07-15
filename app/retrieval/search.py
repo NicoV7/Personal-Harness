@@ -61,8 +61,17 @@ def search(
     vectors = _embed(vectorizer, queries)
     kept: dict[str, dict] = {}
     for query_text, vector in zip(queries, vectors):
-        for hit in _run_hybrid(query_text, vector, index=index, settings=settings,
-                               domain=domain, artifact_type=artifact_type):
+        hits = _run_hybrid(query_text, vector, index=index, settings=settings,
+                           domain=domain, artifact_type=artifact_type)
+        if hits and all(hit.get("vector_similarity") is None for hit in hits):
+            raise Errors.query_error(
+                "hybrid results carry no vector_similarity field; cannot apply the threshold"
+            )
+        for hit in hits:
+            # RRF unions both legs: a hit the vector leg never scored has no
+            # vector_similarity and cannot meet the cosine AND keyword rule.
+            if hit.get("vector_similarity") is None:
+                continue
             if similarity(hit) < settings.similarity_threshold:
                 continue
             if not keyword_hit(hit, query_text):
