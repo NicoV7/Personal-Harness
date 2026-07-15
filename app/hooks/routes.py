@@ -182,15 +182,12 @@ def _stop_payload(
             "hookSpecificOutput": hook_output,
             **base,
         }
-    satisfied = (
-        "BetterAI already reminded the agent to read required skills for this turn."
-        if missing
-        else "BetterAI required skills are satisfied for this turn."
-    )
+    # No context on the allow path: any Stop additionalContext makes the
+    # client re-invoke the agent, looping every turn-end forever.
     return {
         "ok": True,
         "block": False,
-        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": satisfied},
+        "hookSpecificOutput": {"hookEventName": "Stop"},
         **base,
     }
 
