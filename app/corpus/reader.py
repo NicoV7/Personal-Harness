@@ -95,33 +95,46 @@ def _walk_markdown(directory: Path) -> list[Path]:
 
 
 def _load_artifact(path: Path, artifact_type_name: str, scope: Scope) -> Artifact:
-    raw = path.read_text(encoding="utf-8")
-    frontmatter, body = _split_frontmatter(path, raw)
-    frontmatter.update(
+    return parse_artifact_text(
+        path.read_text(encoding="utf-8"),
         artifact_type=artifact_type_name,
         scope=scope,
         source_path=str(path),
+    )
+
+
+def parse_artifact_text(
+    raw: str, *, artifact_type: str, scope: Scope, source_path: str
+) -> Artifact:
+    """Full markdown text -> validated Artifact (shared with add_skill and
+    configure_skill so there is exactly one frontmatter parser)."""
+    frontmatter, body = split_frontmatter(source_path, raw)
+    frontmatter.update(
+        artifact_type=artifact_type,
+        scope=scope,
+        source_path=source_path,
         content_hash=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
         body=body,
     )
     try:
         return Artifact(**frontmatter)
     except ValidationError as exc:
-        raise Errors.artifact_invalid(str(path), _validation_summary(exc)) from exc
+        raise Errors.artifact_invalid(source_path, _validation_summary(exc)) from exc
 
 
-def _split_frontmatter(path: Path, raw: str) -> tuple[dict, str]:
+def split_frontmatter(source: str | Path, raw: str) -> tuple[dict, str]:
+    """(frontmatter mapping, body) or BAI-410 naming `source`."""
     match = _FRONTMATTER_RE.match(raw)
     if match is None:
-        raise Errors.artifact_invalid(str(path), "no frontmatter block found")
+        raise Errors.artifact_invalid(str(source), "no frontmatter block found")
     try:
         data = yaml.safe_load(match.group(1))
     except yaml.YAMLError as exc:
         raise Errors.artifact_invalid(
-            str(path), f"frontmatter is not valid YAML: {exc}"
+            str(source), f"frontmatter is not valid YAML: {exc}"
         ) from exc
     if not isinstance(data, dict):
-        raise Errors.artifact_invalid(str(path), "frontmatter is not a YAML mapping")
+        raise Errors.artifact_invalid(str(source), "frontmatter is not a YAML mapping")
     return data, match.group(2)
 
 
@@ -150,7 +163,7 @@ def _memories_under(directory: Path, scope: Scope) -> list[Memory]:
 def _load_memory(path: Path, scope: Scope) -> Memory | None:
     raw = path.read_text(encoding="utf-8")
     try:
-        frontmatter, body = _split_frontmatter(path, raw)
+        frontmatter, body = split_frontmatter(path, raw)
         return Memory(**{**frontmatter, "scope": scope, "source_path": str(path), "body": body})
     except (ArtifactInvalidError, ValidationError):
         return None

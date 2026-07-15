@@ -28,7 +28,10 @@ from app.settings import Settings
 
 logger = logging.getLogger("betterai")
 
-_PROGRESS_STAGES = {"results": 1.0}
+# Stage -> progress value reported over the MCP stream (total is 3.0).
+# query emits "results"; add_skill walks parsed -> classified -> indexed,
+# where "indexed" is the searchable-now signal.
+_PROGRESS_STAGES = {"results": 1.0, "parsed": 1.0, "classified": 2.0, "indexed": 3.0}
 
 
 def build_deps(settings: Settings) -> Deps:
@@ -82,8 +85,9 @@ def build_app(settings: Settings) -> Any:
 def ops_routes(deps: Deps) -> list:
     """Operator endpoints (bearer-protected like everything but /health).
 
-    These are NOT MCP tools on purpose: the 5-tool agent surface stays
-    frozen; reindex/ingest are `betterai` CLI operations."""
+    These are NOT MCP tools on purpose: the agent tool surface (see
+    registry.TOOL_MODULES) grows only by explicit user decision;
+    reindex/ingest are `betterai` CLI operations."""
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 

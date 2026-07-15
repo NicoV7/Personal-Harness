@@ -10,9 +10,10 @@ enforce the exact same shape instead of drifting apart.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 KEBAB_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*[a-z0-9]$"
 
@@ -45,8 +46,48 @@ class Check(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    artifact_type: Literal["regex", "ast-grep"]
+    # Corpus files predate the kind->artifact_type rename; accept both.
+    artifact_type: Literal["regex", "ast-grep"] = Field(
+        validation_alias=AliasChoices("artifact_type", "kind")
+    )
     pattern: str
+
+
+class OptionSpec(BaseModel):
+    """One configurable option a skill declares under `settings_schema`.
+
+    `configure_skill` validates submitted values against this spec, so a
+    skill's knobs are self-describing: enum needs `choices`, string may
+    carry a `pattern`, int must parse as an integer.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    option_type: Literal["enum", "int", "string"] = Field(alias="type")
+    choices: list[str] | None = None
+    pattern: str | None = None
+    description: str = Field(min_length=1)
+    default: str
+
+    @model_validator(mode="after")
+    def _enum_needs_choices(self) -> "OptionSpec":
+        if self.option_type == "enum" and not self.choices:
+            raise ValueError("enum option declares no choices")
+        return self
+
+
+def invalid_setting(schema: dict[str, OptionSpec], key: str, value: str) -> str | None:
+    """Reason the (key, value) pair violates the declared schema, or None."""
+    spec = schema.get(key)
+    if spec is None:
+        return f"unknown setting {key!r}; declared options: {', '.join(sorted(schema))}"
+    if spec.option_type == "enum" and value not in (spec.choices or []):
+        return f"setting {key!r} expects one of {spec.choices}, got {value!r}"
+    if spec.option_type == "int" and not re.fullmatch(r"-?[0-9]+", value):
+        return f"setting {key!r} expects an integer, got {value!r}"
+    if spec.option_type == "string" and spec.pattern and not re.fullmatch(spec.pattern, value):
+        return f"setting {key!r} must match {spec.pattern!r}, got {value!r}"
+    return None
 
 
 class Artifact(BaseModel):
@@ -70,12 +111,32 @@ class Artifact(BaseModel):
     applies_when: AppliesWhen | None = None
     check: Check | None = None
     created: str | None = None
+    settings_schema: dict[str, OptionSpec] | None = None
+    settings: dict[str, str] | None = None
     scope: Scope = "global"
     source_path: str | None = None
     source_url: str | None = None
     source_ref: str | None = None
     content_hash: str | None = None
     body: str = ""
+
+    @field_validator("created", mode="before")
+    @classmethod
+    def _stringify_created(cls, value: object) -> object:
+        # Unquoted YAML dates arrive as datetime.date; authors write them
+        # bare, so coerce instead of failing the whole corpus load.
+        return value.isoformat() if hasattr(value, "isoformat") else value
+
+    @model_validator(mode="after")
+    def _settings_match_schema(self) -> "Artifact":
+        if not self.settings:
+            return self
+        if not self.settings_schema:
+            raise ValueError("settings present but no settings_schema declared")
+        for key, value in self.settings.items():
+            if problem := invalid_setting(self.settings_schema, key, str(value)):
+                raise ValueError(problem)
+        return self
 
 
 class Memory(BaseModel):

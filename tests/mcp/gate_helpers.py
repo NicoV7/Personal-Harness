@@ -16,7 +16,7 @@ from app.audit import AuditLog
 from app.corpus.schema import Artifact
 from app.deps import Deps
 from app.hooks.state import InMemorySessionStore
-from app.settings import Settings
+from app.settings import CommentPolicy, Settings
 
 
 def make_settings(tmp_path: Path, **overrides) -> Settings:
@@ -44,6 +44,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "plan_glob": "*.plan.md",
         "compose_file": str(tmp_path / "compose.yaml"),
         "docker_sock": "/var/run/docker.sock",
+        "comment_verbosity": CommentPolicy("default"),
     }
     values.update(overrides)
     return Settings(**values)

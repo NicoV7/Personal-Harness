@@ -16,6 +16,7 @@ from app.errors import Errors
 EDIT_GRANULARITIES = ("function", "file", "none")
 HYBRID_FUSIONS = ("linear", "rrf")
 MEMORY_PROVIDERS = ("basic-memory", "cognee", "none")
+COMMENT_MODES = ("default", "none", "tokens", "lines")
 
 REQUIRED_KEYS = (
     "BETTERAI_CORPUS_ROOT",
@@ -40,12 +41,43 @@ REQUIRED_KEYS = (
     "BETTERAI_PLAN_GLOB",
     "BETTERAI_COMPOSE_FILE",
     "BETTERAI_DOCKER_SOCK",
+    "BETTERAI_COMMENT_VERBOSITY",
 )
 
 # Present-but-unset is allowed only for keys whose absence is a meaningful
 # state, never a hidden default. BETTERAI_ALLOWED_HOSTS unset means "derive
 # from bind host + port".
 OPTIONAL_KEYS = ("BETTERAI_ALLOWED_HOSTS",)
+
+
+@dataclass(frozen=True)
+class CommentPolicy:
+    """Comment-verbosity directive injected into every prompt's context.
+
+    mode "default" injects nothing; "none" bans new comments; "tokens" /
+    "lines" carry an integer budget in `limit`.
+    """
+
+    mode: str
+    limit: int | None = None
+
+
+def parse_comment_policy(raw: str) -> CommentPolicy:
+    """Parse 'default' | 'none' | 'tokens:<int>' | 'lines:<int>'.
+
+    Raises ValueError so callers decide the typed error (settings wraps
+    into BAI-121; the hook layer treats a bad skill setting the same way).
+    """
+    mode, _, argument = raw.strip().partition(":")
+    if mode not in COMMENT_MODES:
+        raise ValueError(f"expected one of {COMMENT_MODES}, got {raw!r}")
+    if mode in ("default", "none"):
+        if argument:
+            raise ValueError(f"{mode!r} takes no argument, got {raw!r}")
+        return CommentPolicy(mode=mode)
+    if not argument.isdigit() or int(argument) < 1:
+        raise ValueError(f"{mode!r} needs a positive integer argument, got {raw!r}")
+    return CommentPolicy(mode=mode, limit=int(argument))
 
 
 @dataclass(frozen=True)
@@ -73,6 +105,7 @@ class Settings:
     plan_glob: str
     compose_file: str
     docker_sock: str
+    comment_verbosity: CommentPolicy
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -103,6 +136,7 @@ class Settings:
             plan_glob=env["BETTERAI_PLAN_GLOB"],
             compose_file=env["BETTERAI_COMPOSE_FILE"],
             docker_sock=env["BETTERAI_DOCKER_SOCK"],
+            comment_verbosity=_comment_policy(env, "BETTERAI_COMMENT_VERBOSITY"),
         )
 
 
@@ -134,6 +168,13 @@ def _choice(env: Mapping[str, str], key: str, allowed: tuple[str, ...]) -> str:
     if raw not in allowed:
         raise Errors.config_invalid(key, f"expected one of {allowed}, got {raw!r}")
     return raw
+
+
+def _comment_policy(env: Mapping[str, str], key: str) -> CommentPolicy:
+    try:
+        return parse_comment_policy(env[key])
+    except ValueError as exc:
+        raise Errors.config_invalid(key, str(exc)) from exc
 
 
 def _hosts(raw: str | None) -> tuple[str, ...] | None:

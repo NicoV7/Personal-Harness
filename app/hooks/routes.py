@@ -26,11 +26,16 @@ from app.mcp.read_gate import store as read_store
 from app.mcp.retrieval_receipt_gate import store as receipt_store
 from app.openrouter import make_chat_client
 from app.retrieval.expand import Expansion, expand_prompt, expansion_enabled
+from app.settings import CommentPolicy, parse_comment_policy
 
 # The forced skill that only applies while an edit budget is active
 # (plan decisions 7/8: edit-incrementally is injected only when
 # granularity is not "none").
 EDIT_INCREMENTALLY_SKILL_ID = "edit-incrementally"
+
+# The configurable skill whose `settings.level` overrides the
+# BETTERAI_COMMENT_VERBOSITY env seed (configure_skill writes it).
+COMMENT_SKILL_ID = "concise-comments"
 
 
 def hook_routes(deps: Deps) -> list[Route]:
@@ -58,7 +63,9 @@ def hook_routes(deps: Deps) -> list[Route]:
                 "instruction": _instruction(required),
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
-                    "additionalContext": _prompt_context(required, warning),
+                    "additionalContext": _prompt_context(
+                        required, warning, _comment_policy_line(deps)
+                    ),
                 },
             }
         )
@@ -318,21 +325,66 @@ def _instruction(required: list[str]) -> str:
     )
 
 
-def _prompt_context(required: list[str], warning: str | None) -> str:
+def _prompt_context(
+    required: list[str], warning: str | None, comment_line: str | None = None
+) -> str:
     lines = [warning] if warning else []
     if not required:
         lines.append(
             "BetterAI retrieved context for this prompt. No harness skills "
             "matched, so continue normally."
         )
-        return "\n".join(lines)
-    lines += [
-        "BetterAI retrieved required harness skills for this prompt.",
-        "Before planning, answering, or using ordinary tools, call "
-        "get_skill for every required_skill_id.",
-        f"Required BetterAI skill reads: {', '.join(required)}.",
-    ]
+    else:
+        lines += [
+            "BetterAI retrieved required harness skills for this prompt.",
+            "Before planning, answering, or using ordinary tools, call "
+            "get_skill for every required_skill_id.",
+            f"Required BetterAI skill reads: {', '.join(required)}.",
+        ]
+    if comment_line:
+        lines.append(comment_line)
     return "\n".join(lines)
+
+
+def _comment_policy_line(deps: Deps) -> str | None:
+    """The per-prompt comment budget, or None in default mode. Deterministic
+    injection: this line rides every prompt, independent of retrieval."""
+    policy = _resolve_comment_policy(deps)
+    if policy.mode == "none":
+        return (
+            "BetterAI comment policy: write NO inline or block code comments in "
+            "this task; docstrings on public APIs are still required."
+        )
+    if policy.mode == "tokens":
+        return (
+            "BetterAI comment policy: keep total new comment text under "
+            f"{policy.limit} tokens across this task's edits."
+        )
+    if policy.mode == "lines":
+        return (
+            f"BetterAI comment policy: write at most {policy.limit} comment "
+            "lines per edited file."
+        )
+    return None
+
+
+def _resolve_comment_policy(deps: Deps) -> CommentPolicy:
+    """The concise-comments skill's configured `level` wins over the env
+    seed. Corpus failure falls back to env — it is already surfaced loudly
+    by the forced-skill path in the same request, and the artifact's own
+    settings_schema pattern makes a malformed stored level unparseable
+    only if the file was edited outside configure_skill."""
+    try:
+        artifact = deps.corpus.find(COMMENT_SKILL_ID)
+    except BetterAIError:
+        return deps.settings.comment_verbosity
+    level = (artifact.settings or {}).get("level") if artifact else None
+    if not level:
+        return deps.settings.comment_verbosity
+    try:
+        return parse_comment_policy(level)
+    except ValueError:
+        return deps.settings.comment_verbosity
 
 
 async def _read_body(request: Request) -> dict[str, Any]:

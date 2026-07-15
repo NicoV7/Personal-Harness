@@ -12,17 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from app.corpus.schema import Artifact
 from app.corpus.writer import (
     ArtifactInput,
     artifact_path,
     check_rule_sections,
+    reindex_artifact,
     render_markdown,
     validate_artifact,
     write_artifact,
 )
 from app.deps import Deps
-from app.errors import BetterAIError, Errors
 from app.ingest.chunk import Chunk, chunk_sections
 from app.ingest.distill import distill_chunk
 from app.ingest.extract import extract_sections
@@ -74,15 +73,4 @@ async def _write_and_index(deps: Deps, spec: ArtifactInput) -> None:
     rendered = render_markdown(spec)
     artifact = validate_artifact(spec, "global", path, rendered)
     write_artifact(path, rendered)
-    await _reindex(deps, artifact, path)
-
-
-async def _reindex(deps: Deps, artifact: Artifact, path) -> None:
-    try:
-        await deps.pipeline.index_artifact(artifact)
-    except BetterAIError as exc:
-        raise Errors.index_write_error(
-            f"{artifact.id} was written to {path} but reindexing failed ({exc}); "
-            "run `betterai index` to reindex",
-            cause=exc,
-        ) from exc
+    await reindex_artifact(deps, artifact, path)

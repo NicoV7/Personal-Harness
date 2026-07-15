@@ -12,13 +12,16 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.corpus.schema import KEBAB_ID_PATTERN, Artifact, missing_rule_sections
-from app.errors import Errors
+from app.corpus.schema import KEBAB_ID_PATTERN, Artifact, OptionSpec, missing_rule_sections
+from app.errors import BetterAIError, Errors
+
+if TYPE_CHECKING:
+    from app.deps import Deps
 
 ARTIFACT_FILE_MODE = 0o640
 
@@ -48,6 +51,13 @@ class ArtifactInput(BaseModel):
     )
     source_ref: str | None = Field(
         default=None, description="Provenance: chunk reference within source_url."
+    )
+    settings_schema: dict[str, OptionSpec] | None = Field(
+        default=None,
+        description="Configurable options this artifact declares (see configure_skill).",
+    )
+    settings: dict[str, str] | None = Field(
+        default=None, description="Current values for declared settings_schema options."
     )
     body: str = Field(
         min_length=1,
@@ -93,10 +103,24 @@ def render_markdown(spec: ArtifactInput) -> str:
         value = getattr(spec, key)
         if value is not None:
             frontmatter[key] = value
+    if spec.settings_schema:
+        frontmatter["settings_schema"] = {
+            name: option.model_dump(by_alias=True, exclude_none=True)
+            for name, option in spec.settings_schema.items()
+        }
+    if spec.settings:
+        frontmatter["settings"] = dict(spec.settings)
+    return render_raw_markdown(frontmatter, spec.body)
+
+
+def render_raw_markdown(frontmatter: dict, body: str) -> str:
+    """Frontmatter mapping + body -> full markdown text. Shared with
+    configure_skill, which round-trips a file's own mapping to preserve
+    keys the ArtifactInput shape does not model (check, related, ...)."""
     rendered = yaml.safe_dump(
         frontmatter, sort_keys=False, default_flow_style=False, allow_unicode=True
     ).strip()
-    return f"---\n{rendered}\n---\n\n{spec.body.rstrip()}\n"
+    return f"---\n{rendered}\n---\n\n{body.lstrip('\n').rstrip()}\n"
 
 
 def validate_artifact(spec: ArtifactInput, scope: str, path: Path, rendered: str) -> Artifact:
@@ -122,3 +146,17 @@ def write_artifact(path: Path, rendered: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered, encoding="utf-8")
     os.chmod(path, ARTIFACT_FILE_MODE)
+
+
+async def reindex_artifact(deps: "Deps", artifact: Artifact, path: Path) -> None:
+    """Write-through companion: the file already on disk is the system of
+    record, so an index failure keeps it and the error says how to catch
+    the derived stores up (one attempt, fail-loud-no-retries)."""
+    try:
+        await deps.pipeline.index_artifact(artifact)
+    except BetterAIError as exc:
+        raise Errors.index_write_error(
+            f"{artifact.id} was written to {path} but reindexing failed ({exc}); "
+            "run `betterai index` to reindex",
+            cause=exc,
+        ) from exc

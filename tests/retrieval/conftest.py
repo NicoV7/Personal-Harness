@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.corpus.schema import AppliesWhen, Artifact
-from app.settings import Settings
+from app.settings import CommentPolicy, Settings
 
 EMBEDDING_DIM = 8
 
@@ -41,6 +41,7 @@ def build_settings(**overrides) -> Settings:
         plan_glob="~/.claude/plans/*.md",
         compose_file="/compose/docker-compose.yml",
         docker_sock="/var/run/docker.sock",
+        comment_verbosity=CommentPolicy("default"),
     )
     values.update(overrides)
     return Settings(**values)

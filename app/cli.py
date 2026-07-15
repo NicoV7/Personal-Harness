@@ -164,6 +164,41 @@ def list_skills() -> None:
 
 
 @app.command()
+def add(
+    file: str = typer.Argument(..., help="Path to a markdown artifact (frontmatter + body)"),
+    forced: bool = typer.Option(
+        False, "--forced", help="Inject this artifact into every retrieval"
+    ),
+) -> None:
+    """Add a raw markdown rule/skill via add_skill (parse -> classify -> index)."""
+    path = Path(file).expanduser()
+    if not path.is_file():
+        _print_exit(Errors.config_invalid("file", f"no readable markdown at {file}"))
+    arguments: dict = {"markdown": path.read_text(encoding="utf-8")}
+    if forced:
+        arguments["forced"] = True
+    typer.echo(json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "add_skill", arguments))))
+
+
+@app.command()
+def configure(
+    skill_id: str = typer.Argument(..., help="Artifact id declaring settings_schema"),
+    pairs: list[str] = typer.Argument(..., help="key=value settings, e.g. level=lines:2"),
+) -> None:
+    """Set declared settings options on a skill via configure_skill."""
+    settings: dict[str, str] = {}
+    for pair in pairs:
+        key, separator, value = pair.partition("=")
+        if not separator or not key or not value:
+            _print_exit(Errors.config_invalid("settings", f"expected key=value, got {pair!r}"))
+        settings[key] = value
+    arguments = {"skill_id": skill_id, "settings": settings}
+    typer.echo(
+        json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "configure_skill", arguments)))
+    )
+
+
+@app.command()
 def why(file: str = typer.Argument(...)) -> None:
     """Which rules/skills apply to FILE, via query_skills."""
     arguments = {"intent": f"rules and skills that apply when editing {file}", "file_paths": [file], "top_k": 8}

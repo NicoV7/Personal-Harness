@@ -5,6 +5,9 @@ category: STANDARDS
 domain: maintainability
 severity: medium
 created: 2026-07-09
+# forced 2026-07-09: authored non-forced into an unserved corpus, so it never
+# fired in retrieval — forced guarantees injection on every prompt.
+forced: true
 applies_when:
   paths: ["**/*.go", "**/*.ts", "**/*.py"]
   intents: ["naming", "error-handling", "readability"]

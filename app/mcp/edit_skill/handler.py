@@ -10,19 +10,17 @@ app/corpus/writer.py (shared with the ingest pipeline).
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from app.corpus.schema import Artifact
 from app.corpus.writer import (
     ARTIFACT_FILE_MODE,
     artifact_path,
     check_rule_sections,
+    reindex_artifact,
     render_markdown,
     validate_artifact,
     write_artifact,
 )
 from app.deps import CallMeta, Deps, ProgressFn
-from app.errors import BetterAIError, Errors
+from app.errors import Errors
 from app.mcp.edit_skill.schema import EditSkillInput
 
 __all__ = ["NAME", "DESCRIPTION", "ARTIFACT_FILE_MODE", "handle"]
@@ -48,7 +46,7 @@ async def handle(
     rendered = render_markdown(spec)
     artifact = validate_artifact(spec, input.scope, path, rendered)
     write_artifact(path, rendered)
-    await _reindex(deps, artifact, path)
+    await reindex_artifact(deps, artifact, path)
     deps.audit.record(
         "skill_edited",
         {"id": spec.id, "path": str(path), "scope": input.scope, "indexed": True},
@@ -65,14 +63,3 @@ def _scope_root(deps: Deps, scope: str, artifact_id: str) -> str:
             artifact_id, "scope 'repo' requested but no repo corpus root is configured"
         )
     return deps.corpus.repo_root
-
-
-async def _reindex(deps: Deps, artifact: Artifact, path: Path) -> None:
-    try:
-        await deps.pipeline.index_artifact(artifact)
-    except BetterAIError as exc:
-        raise Errors.index_write_error(
-            f"{artifact.id} was written to {path} but reindexing failed ({exc}); "
-            "run `betterai index` to reindex",
-            cause=exc,
-        ) from exc
