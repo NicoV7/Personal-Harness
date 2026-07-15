@@ -1,9 +1,10 @@
 """Retrieval-receipt hook handler.
 
-Locked decision 5: PreToolUse denies mutating tools until query_skills
-ran this turn. A null session_id disables gating (matches the read-gate
-contract) because hook payloads without a session cannot be attributed
-to a turn.
+Locked decision 5: PreToolUse denies mutating tools until a retrieval
+receipt exists for this turn (normally recorded by the prompt hook at
+delivery). A null session_id disables gating (matches the read-gate
+contract). BETTERAI_RECEIPT_GATE=off is the explicit escape hatch —
+deny only; receipts and audit still run.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ class DenyWithoutReceiptHandler:
         if not event.session_id:
             return None
         if event.tool_name not in registry.MUTATING_TOOL_NAMES:
+            return None
+        if deps.settings.receipt_gate == "off":
             return None
         if receipt_store.has_retrieved(deps.store, event.session_id):
             return None

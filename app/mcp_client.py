@@ -42,6 +42,23 @@ def server_get(user_home: str, path: str) -> dict:
     return response.json()
 
 
+def server_post(user_home: str, path: str, payload: dict, *, timeout: float = 120.0) -> dict:
+    try:
+        response = httpx.post(
+            f"{BASE_URL}{path}",
+            json=payload,
+            headers={"Authorization": f"Bearer {read_token(user_home)}"},
+            timeout=timeout,  # reindex/ingest embed the corpus; slower than a GET
+        )
+    except httpx.HTTPError as exc:
+        raise Errors.stack_unavailable("betterai server", str(exc)) from exc
+    if response.status_code != 200:
+        raise Errors.stack_unavailable(
+            "betterai server", f"POST {path} -> HTTP {response.status_code}: {response.text}"
+        )
+    return response.json()
+
+
 def mcp_call(user_home: str, tool: str, arguments: dict) -> dict:
     """initialize, notifications/initialized, then tools/call — one attempt."""
     headers = {

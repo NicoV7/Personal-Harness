@@ -38,15 +38,40 @@ class CorpusReader:
         self.global_root = global_root
         self.repo_root = repo_root
         self._overridden: list[str] | None = None
+        self._parsed: dict[str, tuple[int, int, Artifact]] = {}
 
     def read(self) -> list[Artifact]:
-        """Fresh walk on every call: the filesystem is the system of
-        record and caching here would create a second source of truth."""
-        global_artifacts = _read_root(self.global_root, "global")
-        repo_artifacts = _read_root(self.repo_root, "repo") if self.repo_root else []
+        """Fresh walk on every call: the filesystem stays the system of
+        record — a parse is reused only while its file's stat (mtime_ns,
+        size) is unchanged, so edits and deletions appear next read."""
+        walked: set[str] = set()
+        global_artifacts = self._read_root(self.global_root, "global", walked)
+        repo_artifacts = (
+            self._read_root(self.repo_root, "repo", walked) if self.repo_root else []
+        )
+        for stale in set(self._parsed) - walked:
+            del self._parsed[stale]
         merged, overridden = _merge_repo_over_global(global_artifacts, repo_artifacts)
         self._overridden = overridden
         return merged
+
+    def _read_root(self, root: str, scope: Scope, walked: set[str]) -> list[Artifact]:
+        artifacts: list[Artifact] = []
+        for dir_name, artifact_type_name in _ARTIFACT_TYPE_DIRS:
+            for path in _walk_markdown(Path(root) / dir_name):
+                walked.add(str(path))
+                artifacts.append(self._load_cached(path, artifact_type_name, scope))
+        return artifacts
+
+    def _load_cached(self, path: Path, artifact_type_name: str, scope: Scope) -> Artifact:
+        # Only successful parses are cached: BAI-410 must re-raise per read.
+        stat = path.stat()
+        cached = self._parsed.get(str(path))
+        if cached is not None and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            return cached[2]
+        artifact = _load_artifact(path, artifact_type_name, scope)
+        self._parsed[str(path)] = (stat.st_mtime_ns, stat.st_size, artifact)
+        return artifact
 
     def find(self, artifact_id: str) -> Artifact | None:
         for artifact in self.read():
@@ -72,14 +97,6 @@ class CorpusReader:
         return memories
 
 
-def _read_root(root: str, scope: Scope) -> list[Artifact]:
-    artifacts: list[Artifact] = []
-    for dir_name, artifact_type_name in _ARTIFACT_TYPE_DIRS:
-        for path in _walk_markdown(Path(root) / dir_name):
-            artifacts.append(_load_artifact(path, artifact_type_name, scope))
-    return artifacts
-
-
 def _walk_markdown(directory: Path) -> list[Path]:
     """Every .md under `directory`, `_meta` trees pruned, sorted for a
     deterministic corpus order regardless of filesystem."""
@@ -95,33 +112,46 @@ def _walk_markdown(directory: Path) -> list[Path]:
 
 
 def _load_artifact(path: Path, artifact_type_name: str, scope: Scope) -> Artifact:
-    raw = path.read_text(encoding="utf-8")
-    frontmatter, body = _split_frontmatter(path, raw)
-    frontmatter.update(
+    return parse_artifact_text(
+        path.read_text(encoding="utf-8"),
         artifact_type=artifact_type_name,
         scope=scope,
         source_path=str(path),
+    )
+
+
+def parse_artifact_text(
+    raw: str, *, artifact_type: str, scope: Scope, source_path: str
+) -> Artifact:
+    """Full markdown text -> validated Artifact (shared with add_skill and
+    configure_skill so there is exactly one frontmatter parser)."""
+    frontmatter, body = split_frontmatter(source_path, raw)
+    frontmatter.update(
+        artifact_type=artifact_type,
+        scope=scope,
+        source_path=source_path,
         content_hash=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
         body=body,
     )
     try:
         return Artifact(**frontmatter)
     except ValidationError as exc:
-        raise Errors.artifact_invalid(str(path), _validation_summary(exc)) from exc
+        raise Errors.artifact_invalid(source_path, _validation_summary(exc)) from exc
 
 
-def _split_frontmatter(path: Path, raw: str) -> tuple[dict, str]:
+def split_frontmatter(source: str | Path, raw: str) -> tuple[dict, str]:
+    """(frontmatter mapping, body) or BAI-410 naming `source`."""
     match = _FRONTMATTER_RE.match(raw)
     if match is None:
-        raise Errors.artifact_invalid(str(path), "no frontmatter block found")
+        raise Errors.artifact_invalid(str(source), "no frontmatter block found")
     try:
         data = yaml.safe_load(match.group(1))
     except yaml.YAMLError as exc:
         raise Errors.artifact_invalid(
-            str(path), f"frontmatter is not valid YAML: {exc}"
+            str(source), f"frontmatter is not valid YAML: {exc}"
         ) from exc
     if not isinstance(data, dict):
-        raise Errors.artifact_invalid(str(path), "frontmatter is not a YAML mapping")
+        raise Errors.artifact_invalid(str(source), "frontmatter is not a YAML mapping")
     return data, match.group(2)
 
 
@@ -150,7 +180,7 @@ def _memories_under(directory: Path, scope: Scope) -> list[Memory]:
 def _load_memory(path: Path, scope: Scope) -> Memory | None:
     raw = path.read_text(encoding="utf-8")
     try:
-        frontmatter, body = _split_frontmatter(path, raw)
+        frontmatter, body = split_frontmatter(path, raw)
         return Memory(**{**frontmatter, "scope": scope, "source_path": str(path), "body": body})
     except (ArtifactInvalidError, ValidationError):
         return None

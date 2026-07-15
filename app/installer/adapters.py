@@ -36,6 +36,14 @@ HOOK_EVENTS = (
     ("Stop", "stop", None),
     ("SessionEnd", "session-end", None),
 )
+# Read-only skill tools are auto-accepted so the forced read-gate loop
+# (query_skills -> get_skill receipts) never stalls on a permission
+# prompt. Mutating tools (edit_skill, start_container) stay prompted.
+AUTO_ALLOWED_TOOLS = (
+    "mcp__betterai__query_skills",
+    "mcp__betterai__get_skill",
+    "mcp__betterai__list_skills",
+)
 from app.installer.instructions import ALWAYS_CONSULT_INSTRUCTIONS
 
 
@@ -98,13 +106,17 @@ def _install_claude(user_home: str, run_client_exec: bool) -> ClientStatus:
         hooks = settings["hooks"] = {}
     for event, script, matcher in HOOK_EVENTS:
         _set_hook(hooks, event, _hook_path(user_home, script), matcher)
+    _set_auto_allowed_permissions(settings)
     _write_json(settings_path, settings)
     fallback = Path(betterai_root(user_home)) / "config" / "claude-code.mcp.json"
     _write_mcp_json(fallback, bridge_path(user_home))
     if run_client_exec:
         _maybe_run_claude_mcp_add(user_home)
     return ClientStatus(
-        "claude", True, str(settings_path), "settings hooks plus claude mcp add when available"
+        "claude",
+        True,
+        str(settings_path),
+        "settings hooks + auto-allowed skill reads plus claude mcp add when available",
     )
 
 
@@ -117,6 +129,11 @@ def _uninstall_claude(user_home: str) -> ClientStatus:
             for event, entries in hooks.items():
                 if isinstance(entries, list):
                     hooks[event] = [e for e in entries if not _is_betterai_hook(e)]
+        permissions = settings.get("permissions")
+        if isinstance(permissions, dict) and isinstance(permissions.get("allow"), list):
+            permissions["allow"] = [
+                e for e in permissions["allow"] if not _is_betterai_permission(e)
+            ]
         _write_json(settings_path, settings)
     return _status_claude(user_home)
 
@@ -124,7 +141,9 @@ def _uninstall_claude(user_home: str) -> ClientStatus:
 def _status_claude(user_home: str) -> ClientStatus:
     path = Path(user_home) / ".claude" / "settings.json"
     installed = path.exists() and ".betterai/hooks" in path.read_text()
-    return ClientStatus("claude", installed, str(path), "settings.json hooks")
+    return ClientStatus(
+        "claude", installed, str(path), "settings.json hooks + permissions.allow"
+    )
 
 
 def _install_codex(user_home: str) -> ClientStatus:
@@ -219,6 +238,28 @@ def _set_hook(hooks: dict, event: str, command: str, matcher: str | None) -> Non
 
 def _is_betterai_hook(entry: object) -> bool:
     return ".betterai/hooks" in json.dumps(entry)
+
+
+def _set_auto_allowed_permissions(settings: dict) -> None:
+    """Idempotently pin AUTO_ALLOWED_TOOLS in permissions.allow, keeping
+    every user entry. A wrong-typed permissions block is the user's data,
+    not ours to clobber -- fail loud instead."""
+    permissions = settings.setdefault("permissions", {})
+    if not isinstance(permissions, dict):
+        raise Errors.config_invalid(
+            "permissions", "~/.claude/settings.json permissions is not a JSON object"
+        )
+    allow = permissions.setdefault("allow", [])
+    if not isinstance(allow, list):
+        raise Errors.config_invalid(
+            "permissions.allow", "~/.claude/settings.json permissions.allow is not a list"
+        )
+    kept = [e for e in allow if not _is_betterai_permission(e)]
+    permissions["allow"] = [*kept, *AUTO_ALLOWED_TOOLS]
+
+
+def _is_betterai_permission(entry: object) -> bool:
+    return isinstance(entry, str) and entry.startswith("mcp__betterai__")
 
 
 def _maybe_run_claude_mcp_add(user_home: str) -> None:

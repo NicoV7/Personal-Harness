@@ -41,6 +41,8 @@ async def handle(
 
 
 def _record_read_receipt(deps: Deps, meta: CallMeta, artifact_id: str) -> None:
+    # Advisory for hook gates: MCP and hook session ids differ; the prompt
+    # hook marks reads at delivery under the id the gates actually check.
     session_id = meta.agent_session_id
     if session_id is None:
         return

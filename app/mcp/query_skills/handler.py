@@ -22,8 +22,8 @@ DESCRIPTION = (
     "ALWAYS call query_skills as your first action on any code task. Runs one "
     "hybrid retrieval query over the corpus (rules + skills), streams stage "
     "progress (candidates -> fused -> reranked), and returns ranked artifacts "
-    "plus any forced skills for this context. Mutating tools stay gated until "
-    "this has run this turn; read each returned skill with get_skill."
+    "plus any forced skills for this context. The prompt hook already serves "
+    "and receipts required skills at delivery; read returned skills with get_skill."
 )
 
 
@@ -86,7 +86,9 @@ def _forced_skill_rows(
 ) -> list[dict]:
     rows: list[dict] = []
     for artifact in deps.corpus.read():
-        if artifact.artifact_type != "skill" or not artifact.forced:
+        # Forced RULES union in too: "rules must be followed" is the product
+        # contract, and the hook-side required set already includes them.
+        if not artifact.forced:
             continue
         if artifact.id in already_returned:
             continue
@@ -94,7 +96,7 @@ def _forced_skill_rows(
             continue
         row = {
             "id": artifact.id,
-            "artifact_type": "skill",
+            "artifact_type": artifact.artifact_type,
             "title": artifact.title,
             "score": 1.0,
             "reason": "forced",
@@ -130,6 +132,8 @@ def _paths_match(globs: list[str] | None, file_paths: list[str] | None) -> bool:
 
 
 def _mark_retrieval_receipt(deps: Deps, meta: CallMeta) -> None:
+    # Advisory for hook gates: the MCP transport session id differs from the
+    # hook session id — the prompt hook's delivery receipt is the one gates see.
     if meta.agent_session_id is None:
         return
     deps.store.set(meta.agent_session_id, "retrieval_receipt", "retrieved", True)
@@ -139,6 +143,7 @@ def _require_skill_reads(deps: Deps, meta: CallMeta, rows: list[dict]) -> None:
     if meta.agent_session_id is None:
         return
     skill_ids = [row["id"] for row in rows if row["artifact_type"] == "skill"]
+    skill_ids = skill_ids[: deps.settings.required_reads_max]
     if not skill_ids:
         return
     existing = deps.store.get(meta.agent_session_id, "read_gate", "required") or []

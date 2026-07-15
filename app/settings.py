@@ -16,6 +16,9 @@ from app.errors import Errors
 EDIT_GRANULARITIES = ("function", "file", "none")
 HYBRID_FUSIONS = ("linear", "rrf")
 MEMORY_PROVIDERS = ("basic-memory", "cognee", "none")
+COMMENT_MODES = ("default", "none", "tokens", "lines")
+READ_GATE_MODES = ("on", "off")
+RECEIPT_GATE_MODES = ("on", "off")
 
 REQUIRED_KEYS = (
     "BETTERAI_CORPUS_ROOT",
@@ -29,6 +32,7 @@ REQUIRED_KEYS = (
     "BETTERAI_OPENROUTER_API_KEY_FILE",
     "BETTERAI_OPENROUTER_EMBEDDING_MODEL",
     "BETTERAI_OPENROUTER_AGENT_MODEL",
+    "BETTERAI_PROMPT_IMPROVER_MODEL",
     "BETTERAI_EMBEDDING_DIM",
     "BETTERAI_HYBRID_FUSION",
     "BETTERAI_HYBRID_ALPHA",
@@ -39,12 +43,48 @@ REQUIRED_KEYS = (
     "BETTERAI_PLAN_GLOB",
     "BETTERAI_COMPOSE_FILE",
     "BETTERAI_DOCKER_SOCK",
+    "BETTERAI_COMMENT_VERBOSITY",
+    "BETTERAI_READ_GATE",
+    "BETTERAI_RECEIPT_GATE",
+    "BETTERAI_REQUIRED_READS_MAX",
+    "BETTERAI_SKILLS_REPO_URL",
+    "BETTERAI_SKILLS_SYNC_TTL",
 )
 
 # Present-but-unset is allowed only for keys whose absence is a meaningful
 # state, never a hidden default. BETTERAI_ALLOWED_HOSTS unset means "derive
 # from bind host + port".
 OPTIONAL_KEYS = ("BETTERAI_ALLOWED_HOSTS",)
+
+
+@dataclass(frozen=True)
+class CommentPolicy:
+    """Comment-verbosity directive injected into every prompt's context.
+
+    mode "default" injects nothing; "none" bans new comments; "tokens" /
+    "lines" carry an integer budget in `limit`.
+    """
+
+    mode: str
+    limit: int | None = None
+
+
+def parse_comment_policy(raw: str) -> CommentPolicy:
+    """Parse 'default' | 'none' | 'tokens:<int>' | 'lines:<int>'.
+
+    Raises ValueError so callers decide the typed error (settings wraps
+    into BAI-121; the hook layer treats a bad skill setting the same way).
+    """
+    mode, _, argument = raw.strip().partition(":")
+    if mode not in COMMENT_MODES:
+        raise ValueError(f"expected one of {COMMENT_MODES}, got {raw!r}")
+    if mode in ("default", "none"):
+        if argument:
+            raise ValueError(f"{mode!r} takes no argument, got {raw!r}")
+        return CommentPolicy(mode=mode)
+    if not argument.isdigit() or int(argument) < 1:
+        raise ValueError(f"{mode!r} needs a positive integer argument, got {raw!r}")
+    return CommentPolicy(mode=mode, limit=int(argument))
 
 
 @dataclass(frozen=True)
@@ -61,6 +101,7 @@ class Settings:
     openrouter_api_key_file: str
     openrouter_embedding_model: str
     openrouter_agent_model: str
+    prompt_improver_model: str  # "off" disables prompt expansion explicitly
     embedding_dim: int
     hybrid_fusion: str
     hybrid_alpha: float
@@ -71,6 +112,12 @@ class Settings:
     plan_glob: str
     compose_file: str
     docker_sock: str
+    comment_verbosity: CommentPolicy
+    read_gate: str  # "off" is the explicit escape hatch: delivery/receipts/audit still run
+    receipt_gate: str  # mirrors read_gate: "off" disables only the deny
+    required_reads_max: int
+    skills_repo_url: str  # "off" disables the GitHub skills sync explicitly
+    skills_sync_ttl: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -90,6 +137,7 @@ class Settings:
             openrouter_api_key_file=env["BETTERAI_OPENROUTER_API_KEY_FILE"],
             openrouter_embedding_model=env["BETTERAI_OPENROUTER_EMBEDDING_MODEL"],
             openrouter_agent_model=env["BETTERAI_OPENROUTER_AGENT_MODEL"],
+            prompt_improver_model=env["BETTERAI_PROMPT_IMPROVER_MODEL"],
             embedding_dim=_int(env, "BETTERAI_EMBEDDING_DIM"),
             hybrid_fusion=_choice(env, "BETTERAI_HYBRID_FUSION", HYBRID_FUSIONS),
             hybrid_alpha=_float(env, "BETTERAI_HYBRID_ALPHA"),
@@ -100,6 +148,12 @@ class Settings:
             plan_glob=env["BETTERAI_PLAN_GLOB"],
             compose_file=env["BETTERAI_COMPOSE_FILE"],
             docker_sock=env["BETTERAI_DOCKER_SOCK"],
+            comment_verbosity=_comment_policy(env, "BETTERAI_COMMENT_VERBOSITY"),
+            read_gate=_choice(env, "BETTERAI_READ_GATE", READ_GATE_MODES),
+            receipt_gate=_choice(env, "BETTERAI_RECEIPT_GATE", RECEIPT_GATE_MODES),
+            required_reads_max=_positive_int(env, "BETTERAI_REQUIRED_READS_MAX"),
+            skills_repo_url=_https_or_off(env, "BETTERAI_SKILLS_REPO_URL"),
+            skills_sync_ttl=_positive_int(env, "BETTERAI_SKILLS_SYNC_TTL"),
         )
 
 
@@ -130,6 +184,27 @@ def _choice(env: Mapping[str, str], key: str, allowed: tuple[str, ...]) -> str:
     raw = env[key]
     if raw not in allowed:
         raise Errors.config_invalid(key, f"expected one of {allowed}, got {raw!r}")
+    return raw
+
+
+def _positive_int(env: Mapping[str, str], key: str) -> int:
+    value = _int(env, key)
+    if value < 1:
+        raise Errors.config_invalid(key, f"expected an integer >= 1, got {value}")
+    return value
+
+
+def _comment_policy(env: Mapping[str, str], key: str) -> CommentPolicy:
+    try:
+        return parse_comment_policy(env[key])
+    except ValueError as exc:
+        raise Errors.config_invalid(key, str(exc)) from exc
+
+
+def _https_or_off(env: Mapping[str, str], key: str) -> str:
+    raw = env[key]
+    if raw != "off" and not raw.startswith("https://"):
+        raise Errors.config_invalid(key, f"expected 'off' or an https:// URL, got {raw!r}")
     return raw
 
 

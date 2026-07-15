@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.corpus.schema import AppliesWhen, Artifact
-from app.settings import Settings
+from app.settings import CommentPolicy, Settings
 
 EMBEDDING_DIM = 8
 
@@ -30,6 +30,7 @@ def build_settings(**overrides) -> Settings:
         openrouter_api_key_file="/secrets/openrouter-key",
         openrouter_embedding_model="openai/text-embedding-3-small",
         openrouter_agent_model="openai/gpt-test",
+        prompt_improver_model="off",
         embedding_dim=EMBEDDING_DIM,
         hybrid_fusion="linear",
         hybrid_alpha=0.7,
@@ -40,6 +41,12 @@ def build_settings(**overrides) -> Settings:
         plan_glob="~/.claude/plans/*.md",
         compose_file="/compose/docker-compose.yml",
         docker_sock="/var/run/docker.sock",
+        comment_verbosity=CommentPolicy("default"),
+        read_gate="on",
+        receipt_gate="on",
+        required_reads_max=5,
+        skills_repo_url="off",
+        skills_sync_ttl=3600,
     )
     values.update(overrides)
     return Settings(**values)

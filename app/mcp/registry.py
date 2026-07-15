@@ -23,8 +23,10 @@ from __future__ import annotations
 from app.hooks.chain import HookChain
 from app.hooks.events import PostToolUse, PreToolUse, SessionEnd, Stop, UserPromptSubmit
 
-# Tools, alphabetical. The surface is exactly these five.
+# Tools, alphabetical. The surface is exactly these seven.
 TOOL_MODULES = (
+    "app.mcp.add_skill",
+    "app.mcp.configure_skill",
     "app.mcp.edit_skill",
     "app.mcp.get_skill",
     "app.mcp.list_skills",

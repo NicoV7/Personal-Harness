@@ -26,7 +26,7 @@ from app.installer.compose import render_compose
 from app.installer.hooks_scripts import write_hook_scripts
 from app.installer.install_env import betterai_root, install_env_values
 from app.installer.memory_provider import memory_provider_wiring
-from app.mcp_client import mcp_call, server_get
+from app.mcp_client import mcp_call, server_get, server_post
 from app.settings import REQUIRED_KEYS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -43,6 +43,7 @@ def perform_install(
     judge_model: str,
     openrouter_key_file: str,
     run_client_exec: bool,
+    prompt_improver_model: str = "",
 ) -> str:
     """Write the full install tree under <user_home>/.betterai."""
     root = Path(betterai_root(user_home))
@@ -54,6 +55,7 @@ def perform_install(
         user_home,
         overrides={
             "BETTERAI_OPENROUTER_AGENT_MODEL": judge_model,
+            "BETTERAI_PROMPT_IMPROVER_MODEL": prompt_improver_model,
             "BETTERAI_EDIT_GRANULARITY": granularity,
             "BETTERAI_MEMORY_PROVIDER": memory_provider,
         },
@@ -77,6 +79,11 @@ def install(
     openrouter_key_file: str = typer.Option(
         ..., "--openrouter-key-file", prompt="Path to a file containing your OpenRouter API key"
     ),
+    prompt_improver_model: str = typer.Option(
+        "",
+        "--prompt-improver-model",
+        help="OpenRouter model for prompt expansion; empty reuses the judge model, 'off' disables",
+    ),
 ) -> None:
     """Write dirs, token, .env, compose, hooks, bridge, and client adapters."""
     root = _fail_loud(
@@ -88,6 +95,7 @@ def install(
             judge_model=judge_model,
             openrouter_key_file=openrouter_key_file,
             run_client_exec=os.environ.get("BETTERAI_SKIP_CLIENT_EXEC") != "1",
+            prompt_improver_model=prompt_improver_model,
         )
     )
     typer.echo(f"betterai install: ready at {root}")
@@ -156,9 +164,50 @@ def list_skills() -> None:
 
 
 @app.command()
+def add(
+    file: str = typer.Argument(..., help="Path to a markdown artifact (frontmatter + body)"),
+    forced: bool = typer.Option(
+        False, "--forced", help="Inject this artifact into every retrieval"
+    ),
+) -> None:
+    """Add a raw markdown rule/skill via add_skill (parse -> classify -> index)."""
+    path = Path(file).expanduser()
+    if not path.is_file():
+        _print_exit(Errors.config_invalid("file", f"no readable markdown at {file}"))
+    arguments: dict = {"markdown": path.read_text(encoding="utf-8")}
+    if forced:
+        arguments["forced"] = True
+    typer.echo(json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "add_skill", arguments))))
+
+
+@app.command()
+def configure(
+    skill_id: str = typer.Argument(..., help="Artifact id declaring settings_schema"),
+    pairs: list[str] = typer.Argument(..., help="key=value settings, e.g. level=lines:2"),
+) -> None:
+    """Set declared settings options on a skill via configure_skill."""
+    settings: dict[str, str] = {}
+    for pair in pairs:
+        key, separator, value = pair.partition("=")
+        if not separator or not key or not value:
+            _print_exit(Errors.config_invalid("settings", f"expected key=value, got {pair!r}"))
+        settings[key] = value
+    arguments = {"skill_id": skill_id, "settings": settings}
+    typer.echo(
+        json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "configure_skill", arguments)))
+    )
+
+
+@app.command()
 def why(file: str = typer.Argument(...)) -> None:
     """Which rules/skills apply to FILE, via query_skills."""
-    arguments = {"intent": f"rules and skills that apply when editing {file}", "file_paths": [file], "top_k": 8}
+    arguments = {
+        "context": {
+            "intent": f"rules and skills that apply when editing {file}",
+            "file_paths": [file],
+        },
+        "top_k": 8,
+    }
     typer.echo(json.dumps(_fail_loud(lambda: mcp_call(_user_home(), "query_skills", arguments))))
 
 
@@ -178,10 +227,26 @@ def check(file: str = typer.Argument(...)) -> None:
 
 @app.command()
 def index() -> None:
-    # The 5-tool MCP surface has no index tool and the reindex endpoint is
-    # not in the frozen cross-module contracts; wiring it up is the
-    # integration agent's call. Honest and loud until then.
-    _not_implemented("index", "server reindex endpoint not in the frozen contracts yet")
+    """Re-read the corpus and rebuild the redis/pg index via POST /reindex."""
+    typer.echo(json.dumps(_fail_loud(lambda: server_post(_user_home(), "/reindex", {}))))
+
+
+@app.command()
+def ingest(url: str = typer.Argument(..., help="Blog post URL to distill into the corpus")) -> None:
+    """Parse, chunk, and distill a post into corpus rules/skills via POST /ingest."""
+    result = _fail_loud(
+        lambda: server_post(_user_home(), "/ingest", {"url": url}, timeout=600.0)
+    )
+    typer.echo(json.dumps(result))
+
+
+@app.command()
+def sync() -> None:
+    """Force a skills-repo pull into the corpus (and reindex) via POST /sync."""
+    result = _fail_loud(
+        lambda: server_post(_user_home(), "/sync", {}, timeout=600.0)
+    )
+    typer.echo(json.dumps(result))
 
 
 @app.command("export-memories")
@@ -191,13 +256,63 @@ def export_memories() -> None:
     _not_implemented("export-memories", "provider export (P6) not in this build")
 
 
-@app.command("eval")
-def eval_cmd(subcommand: str = typer.Argument(..., help="install-smoke|fixtures|run")) -> None:
-    _not_implemented(f"eval {subcommand}", "eval harness is P8")
+eval_app = typer.Typer(no_args_is_help=True, help="Task evals (A/B + blind judge) and smoke.")
+app.add_typer(eval_app, name="eval")
+
+_FIXTURES_DIR_OPTION = typer.Option(
+    "tests/product/evals", "--fixtures-dir", help="Directory holding fixtures/ and rubric-blogs.yaml"
+)
+
+
+@eval_app.command("fixtures")
+def eval_fixtures(fixtures_dir: str = _FIXTURES_DIR_OPTION) -> None:
+    """List fixtures with their expected rules/skills and rubric coverage."""
+    from app.evals.rubric import list_fixtures
+
+    rows = _fail_loud(lambda: list_fixtures(Path(fixtures_dir) / "fixtures"))
+    summary = [
+        {
+            "id": fixture["id"],
+            "criteria": len(fixture["rubric"]),
+            "expected_rubric_min": fixture.get("expected_rubric_min"),
+            "expected_rule_fires": fixture.get("expected_rule_fires", []),
+            "expected_skill_reads": fixture.get("expected_skill_reads", []),
+        }
+        for fixture in rows
+    ]
+    typer.echo(json.dumps(summary, indent=2))
+
+
+@eval_app.command("run")
+def eval_run(
+    fixture: str = typer.Option(None, "--fixture", help="Run one fixture id; omit for all"),
+    fixtures_dir: str = _FIXTURES_DIR_OPTION,
+) -> None:
+    """Two-arm A/B per fixture with a blind LLM judge; writes report.json."""
+    from app.evals.runner import run_evals
+
+    report = _fail_loud(
+        lambda: run_evals(
+            user_home=_user_home(), fixtures_dir=Path(fixtures_dir), fixture_id=fixture
+        )
+    )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@eval_app.command("install-smoke")
+def eval_install_smoke(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip live server probes"),
+) -> None:
+    """Install into a throwaway HOME and verify tree, gates wiring, secrets."""
+    from app.evals.smoke import run_install_smoke
+
+    result = _fail_loud(lambda: run_install_smoke(dry_run=dry_run, user_home=_user_home()))
+    typer.echo(json.dumps(result, indent=2))
+    if not result["passed"]:
+        raise typer.Exit(1)
 
 
 def _not_implemented(verb: str, detail: str) -> None:
-    # TODO(P8): replace stubs with real implementations.
     typer.echo(f"betterai {verb}: not implemented in this build ({detail})", err=True)
     raise typer.Exit(1)
 

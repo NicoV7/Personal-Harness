@@ -1,6 +1,7 @@
 # BetterAI Eval Harness — Qualitative with-corpus vs without-corpus
 
-**Status**: PROPOSED (designed during /autoplan post-mortem code review, 2026-06-09)
+**Status**: ACTIVE foundation (install smoke + fixture inventory live; full
+two-arm LLM judge still proposed)
 **Owner**: nicov
 **Slots into v1.5 plan**: Item 5b (held-out regression pack) + Item 4 (dogfooding gate exit measurement)
 **Related skill**: gstack-benchmark-models pattern; this is the BetterAI-specific variant.
@@ -14,6 +15,24 @@
 Retrieval metrics (nDCG@5, precision@3) are internal. They don't answer this. The only answer that matters is: *given the same task, does the agent with BetterAI produce something that a human reviewer would call better than the agent without BetterAI?*
 
 ## The experiment
+
+There are now two layers:
+
+1. **Install smoke** proves the no-npx harness wiring works end to end:
+   temp `HOME`, generated token/provider files, Docker Compose, `doctor`,
+   stdio bridge, `retrieve_context`, `read_skill`, hook block/allow, harness
+   toggle, and secret scanning.
+2. **Task A/B evals** prove behavior lift: same prompt, same model, isolated
+   worktrees, control without BetterAI, treatment with BetterAI retrieval and
+   deterministic skill reads.
+
+Current executable commands:
+
+```bash
+betterai eval install-smoke            # full Docker/install/MCP/hook smoke
+betterai eval install-smoke --dry-run  # fast scaffold/adapters/secret probe
+betterai eval fixtures                 # list fixture scoring inputs
+```
 
 For each fixture in `src/__tests__/fixtures/task-evals/regression/`:
 
@@ -55,10 +74,15 @@ Each criterion: 0/1/2 (missing / partial / fully addressed). Total /12.
 ## CLI surface
 
 ```bash
-betterai eval --fixture coffee-shop-landing-page
-betterai eval --fixture-set held-out          # runs all 5 held-out cases
-betterai eval --fixture coffee-shop-landing-page --judge-model haiku-4.5
-betterai eval --report ~/.betterai/eval/runs/2026-06-09T17:30:00Z/
+betterai eval install-smoke
+betterai eval install-smoke --dry-run
+betterai eval fixtures
+
+# Future full A/B judge surface:
+# betterai eval --fixture install-client-adapter
+# betterai eval --fixture-set held-out
+# betterai eval --judge-model haiku-4.5
+# betterai eval --report ~/.betterai/eval/runs/2026-06-09T17:30:00Z/
 ```
 
 Output:

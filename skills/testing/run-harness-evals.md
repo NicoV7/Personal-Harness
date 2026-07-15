@@ -12,11 +12,11 @@ estimated_minutes: 15
 applies_when:
   paths:
     - install.sh
-    - docker-compose.yml
-    - src/cli/**
-    - src/hooks/**
-    - src/mcp-tools/**
-    - src/__tests__/fixtures/task-evals/**
+    - Dockerfile
+    - app/cli.py
+    - app/hooks/**
+    - app/evals/**
+    - tests/product/evals/**
   intents:
     - eval harness
     - install smoke
@@ -41,10 +41,11 @@ know without retrieval.
 
 ## Steps
 
-1. Run the fast local gate first: `npm run typecheck`, `npm test`, and
-   `bash -n install.sh`.
-2. Run `betterai eval fixtures` and confirm the fixture you changed appears
-   with expected rules/skills and rubric coverage.
+1. Run the fast local gate first:
+   `pytest tests -m "not integration and not e2e"` and `bash -n install.sh`.
+2. Run `betterai eval fixtures` (app/evals/rubric.py loads
+   tests/product/evals/fixtures/*.yaml) and confirm the fixture you changed
+   appears with expected rules/skills and rubric coverage.
 3. For release smoke, run `betterai eval install-smoke` from a clean checkout.
    It uses a temporary `HOME`, a unique Compose container name, the generated
    stdio bridge, hook endpoints, and `get_skill` read receipts, and probes the
@@ -53,8 +54,9 @@ know without retrieval.
    and edit-budget gate (BAI-703).
 4. If local Docker cost is too high during inner-loop work, run
    `betterai eval install-smoke --dry-run`; this checks scaffold, client
-   adapters, generated hooks, file modes, and secret isolation without starting
-   containers.
+   adapters, generated hooks, permissions.allow auto-accept entries, file
+   modes, and secret isolation without starting containers (implementation:
+   app/evals/smoke.py).
 5. Inspect the generated `report.json`. It must show no failed checks, no
    bearer/provider secret values in client configs, a blocked mutating tool
    before `get_skill`, a blocked final answer before `get_skill`, and an

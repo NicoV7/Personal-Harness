@@ -6,7 +6,7 @@ from app.hooks.events import PreToolUse
 from app.mcp import registry
 from app.mcp.retrieval_receipt_gate import store as receipt_store
 from app.mcp.retrieval_receipt_gate.gate import HANDLERS
-from tests.mcp.gate_helpers import audit_events, make_deps
+from tests.mcp.gate_helpers import audit_events, make_deps, make_settings
 
 SESSION = "sess-receipt"
 
@@ -23,7 +23,22 @@ def test_mutating_tool_denied_without_receipt(tmp_path):
     # assert
     assert decision is not None and decision.deny is True
     assert decision.error_code == "BAI-701"
-    assert "query_skills" in decision.reason
+    assert "no retrieval receipt" in decision.reason
+    assert "BETTERAI_RECEIPT_GATE=off" in decision.reason
+
+
+def test_receipt_gate_off_disables_deny_only(tmp_path):
+    # arrange
+    deps = make_deps(tmp_path, settings=make_settings(tmp_path, receipt_gate="off"))
+
+    # act
+    decision = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Write"), deps
+    )
+
+    # assert
+    assert decision is None
+    assert audit_events(deps) == []
 
 
 def test_mutating_tool_allowed_after_receipt(tmp_path):

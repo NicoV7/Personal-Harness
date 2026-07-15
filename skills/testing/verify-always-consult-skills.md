@@ -6,14 +6,14 @@ when_to_use: |
   Use when changing prompt hooks, read receipts, client adapters, MCP
   instructions, or install smoke behavior that controls whether agents retrieve
   and read BetterAI skills on every prompt.
-steps_count: 6
+steps_count: 7
 estimated_minutes: 10
 applies_when:
   paths:
-    - src/hooks/**
-    - src/runtime/read-receipts.ts
-    - src/cli/adapters.ts
-    - src/cli/eval.ts
+    - app/hooks/**
+    - app/mcp/*_gate/**
+    - app/installer/adapters.py
+    - app/evals/**
     - install.sh
   intents:
     - always consult skills
@@ -39,17 +39,25 @@ tools before loading the matched BetterAI skills for the current prompt.
    session turn.
 2. Confirm the hook injects context that tells the agent to call `get_skill`
    for every matched skill before planning, answering, or ordinary tool use.
-3. Confirm `PreToolUse` blocks ordinary tools while required skills are unread
-   but still allows BetterAI bootstrap tools such as `query_skills` and
-   `get_skill`.
-4. Confirm the retrieval-receipt gate denies mutating tools when `query_skills`
+3. Confirm the prompt hook SERVES required skill bodies inline (forced-first,
+   capped by BETTERAI_REQUIRED_READS_MAX) and marks read receipts at delivery.
+4. Confirm `PreToolUse` blocks only MUTATING tools (Edit/Write/MultiEdit/
+   NotebookEdit) while required skills are unread; read-only tools, ToolSearch,
+   and subagent spawns always pass (deadlock post-mortem 2026-07-15), and
+   BETTERAI_READ_GATE=off disables only the deny.
+5. Confirm the retrieval-receipt gate denies mutating tools when `query_skills`
    has not run this turn (BAI-701), and that the companion gates in the same
    chain keep their contracts: plan-manifest denies out-of-manifest Edit/Write
    (BAI-702) and edit-budget denies over-budget mutations (BAI-703).
 5. Confirm `Stop` blocks once when required skills remain unread, then avoids an
    infinite loop on repeated stop attempts; in active edit-budget modes the
    Stop hook never blocks, because stopping to converse is the point.
-6. Run the focused hook/adapter/eval tests and the full install smoke when
+6. Confirm the Claude adapter's auto-allowed permissions
+   (`permissions.allow` entries for `query_skills`/`get_skill`/
+   `list_skills`) cover ONLY read-only tools — auto-accept removes the
+   permission prompt, never the gates; mutating tools stay prompted and
+   gated.
+7. Run the focused hook/adapter/eval tests and the full install smoke when
    changing installer or client integration behavior.
 
 ## What good looks like

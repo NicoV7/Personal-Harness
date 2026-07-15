@@ -12,12 +12,12 @@ import asyncio
 import os
 
 import pytest
+import redis as redis_lib
 
 from app.corpus.schema import Artifact
 from app.retrieval import Retrieval
-from app.retrieval import ingest as ingest_module
 from app.retrieval import pg
-from app.retrieval.ingest import ingest
+from app.retrieval.ingest import ingest, make_index
 from app.retrieval.search import search
 from app.settings import Settings
 
@@ -63,6 +63,10 @@ def stack_settings(full_env: dict[str, str], tmp_path) -> Settings:
     postgres_dsn = os.environ.get("BETTERAI_TEST_POSTGRES_DSN")
     if not redis_url or not postgres_dsn:
         pytest.skip("live stack env (BETTERAI_TEST_REDIS_URL/_POSTGRES_DSN) not set")
+    client = redis_lib.Redis.from_url(redis_url)
+    for key in client.scan_iter("betterai:artifact*"):
+        client.delete(key)
+    client.close()
     key_file = tmp_path / "openrouter-key"
     key_file.write_text("integration-test-key")
     env = {
@@ -80,7 +84,7 @@ class TestStackRoundtrip:
     def test_ingest_then_hybrid_search_selects_by_threshold_and_keyword(self, stack_settings):
         # arrange
         vectorizer = StubVectorizer()
-        index = ingest_module.make_index(stack_settings)
+        index = make_index(stack_settings)
         network_rule = _artifact(
             "fail-loud-network",
             "Fail loud on network errors",
@@ -115,7 +119,7 @@ class TestStackRoundtrip:
     def test_write_through_persists_rows_in_postgres(self, stack_settings):
         # arrange
         vectorizer = StubVectorizer()
-        index = ingest_module.make_index(stack_settings)
+        index = make_index(stack_settings)
         artifact = _artifact(
             "pg-roundtrip-check",
             "Postgres write-through check",
@@ -140,7 +144,7 @@ class TestStackRoundtrip:
         retrieval = Retrieval.__new__(Retrieval)
         retrieval._settings = stack_settings
         retrieval._vectorizer = StubVectorizer()
-        retrieval._index = ingest_module.make_index(stack_settings)
+        retrieval._index = make_index(stack_settings)
         retrieval._artifacts = {}
         network_rule = _artifact(
             "facade-network-rule",

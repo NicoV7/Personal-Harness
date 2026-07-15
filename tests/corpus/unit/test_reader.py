@@ -70,6 +70,56 @@ class TestRead:
         assert reader.overridden_global_ids() == []
 
 
+class TestParseCache:
+    def test_unchanged_files_are_not_reparsed(self, corpus_root, monkeypatch):
+        # arrange
+        reader = CorpusReader(str(corpus_root))
+        reader.read()
+        reads: list[str] = []
+        original = Path.read_text
+
+        def counting_read_text(self, *args, **kwargs):
+            reads.append(str(self))
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+        # act
+        second = reader.read()
+
+        # assert: stat-validated reuse — no file content is re-read
+        assert reads == []
+        assert len(second) > 0
+
+    def test_changed_file_is_visible_next_read(self, corpus_root):
+        # arrange
+        reader = CorpusReader(str(corpus_root))
+        before = reader.find("fail-loud-no-retries")
+        path = Path(before.source_path)
+        raw = path.read_text(encoding="utf-8")
+        path.write_text(
+            raw.replace("Fail loud, never retry", "Fail loud v2"), encoding="utf-8"
+        )
+
+        # act
+        after = reader.find("fail-loud-no-retries")
+
+        # assert
+        assert after.title == "Fail loud v2"
+
+    def test_deleted_file_disappears_next_read(self, corpus_root):
+        # arrange
+        reader = CorpusReader(str(corpus_root))
+        target = Path(reader.find("write-pytest-fixture").source_path)
+
+        # act
+        target.unlink()
+        artifacts = reader.read()
+
+        # assert
+        assert all(a.id != "write-pytest-fixture" for a in artifacts)
+
+
 class TestFind:
     def test_find_returns_artifact_of_any_kind(self, corpus_root):
         # arrange

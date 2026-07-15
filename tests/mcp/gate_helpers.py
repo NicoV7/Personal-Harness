@@ -16,7 +16,9 @@ from app.audit import AuditLog
 from app.corpus.schema import Artifact
 from app.deps import Deps
 from app.hooks.state import InMemorySessionStore
-from app.settings import Settings
+from app.openrouter import ChatClientProvider
+from app.settings import CommentPolicy, Settings
+from app.sync.skills import SkillsSync
 
 
 def make_settings(tmp_path: Path, **overrides) -> Settings:
@@ -33,6 +35,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "openrouter_api_key_file": str(tmp_path / "openrouter.key"),
         "openrouter_embedding_model": "openai/text-embedding-3-small",
         "openrouter_agent_model": "test/judge-model",
+        "prompt_improver_model": "off",
         "embedding_dim": 1536,
         "hybrid_fusion": "rrf",
         "hybrid_alpha": 0.5,
@@ -43,6 +46,12 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "plan_glob": "*.plan.md",
         "compose_file": str(tmp_path / "compose.yaml"),
         "docker_sock": "/var/run/docker.sock",
+        "comment_verbosity": CommentPolicy("default"),
+        "read_gate": "on",
+        "receipt_gate": "on",
+        "required_reads_max": 5,
+        "skills_repo_url": "off",
+        "skills_sync_ttl": 3600,
     }
     values.update(overrides)
     return Settings(**values)
@@ -115,6 +124,8 @@ class FakePipeline:
         return None
 
     async def health(self) -> dict:
+        if self._error is not None:
+            raise self._error
         return {"ok": True}
 
 
@@ -124,6 +135,8 @@ def make_deps(
     settings: Settings | None = None,
     pipeline: FakePipeline | None = None,
     corpus: FakeCorpus | None = None,
+    chat: ChatClientProvider | None = None,
+    sync: SkillsSync | None = None,
 ) -> Deps:
     resolved = settings or make_settings(tmp_path)
     return Deps(
@@ -132,6 +145,8 @@ def make_deps(
         corpus=corpus or FakeCorpus(),
         pipeline=pipeline or FakePipeline(),
         store=InMemorySessionStore(),
+        chat=chat or ChatClientProvider(resolved),
+        sync=sync or SkillsSync(),
     )
 
 

@@ -64,7 +64,7 @@ class CaptureManifestHandler:
         ]
         if not plan_paths:
             return None
-        content = _written_content(event.tool_input)
+        content = written_content(event.tool_input)
         parsed = parse_files_to_touch(content)
         if not parsed.ok:
             manifest_store.deactivate(deps.store, event.session_id)
@@ -155,7 +155,7 @@ class ClearManifestHandler:
         return None
 
 
-def _written_content(tool_input: dict[str, Any]) -> str:
+def written_content(tool_input: dict[str, Any]) -> str:
     """Write carries full content; Edit only carries new_string, so a
     partial re-parse is best effort — failure just deactivates loudly."""
     for key in ("content", "new_string"):

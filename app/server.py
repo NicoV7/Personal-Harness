@@ -28,13 +28,18 @@ from app.settings import Settings
 
 logger = logging.getLogger("betterai")
 
-_PROGRESS_STAGES = {"results": 1.0}
+# Stage -> progress value reported over the MCP stream (total is 3.0).
+# query emits "results"; add_skill walks parsed -> classified -> indexed,
+# where "indexed" is the searchable-now signal.
+_PROGRESS_STAGES = {"results": 1.0, "parsed": 1.0, "classified": 2.0, "indexed": 3.0}
 
 
 def build_deps(settings: Settings) -> Deps:
     # Imported here so importing this module never constructs the redis/
     # openai clients (tests import app.server for wiring only).
+    from app.openrouter import ChatClientProvider
     from app.retrieval import Retrieval
+    from app.sync.skills import SkillsSync
 
     return Deps(
         settings=settings,
@@ -42,6 +47,8 @@ def build_deps(settings: Settings) -> Deps:
         corpus=CorpusReader(settings.corpus_root),
         pipeline=Retrieval(settings),
         store=InMemorySessionStore(),
+        chat=ChatClientProvider(settings),
+        sync=SkillsSync(),
     )
 
 
@@ -57,8 +64,7 @@ def build_mcp(deps: Deps) -> Any:
 
 def build_app(settings: Settings) -> Any:
     from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
-    from starlette.routing import Mount, Route
+    from starlette.routing import Mount
 
     from app.hooks.routes import hook_routes
 
@@ -66,16 +72,97 @@ def build_app(settings: Settings) -> Any:
     mcp = build_mcp(deps)
     http_app = mcp.http_app(path="/mcp")
 
-    async def health(request: Any) -> JSONResponse:
-        return JSONResponse({"status": "ok", "service": "betterai"})
-
     routes = [
-        Route("/health", health, methods=["GET"]),
+        health_route(deps),
+        *ops_routes(deps),
         *hook_routes(deps),
         Mount("/", app=http_app),
     ]
     app = Starlette(routes=routes, lifespan=_lifespan(http_app, deps))
     return BearerAuthMiddleware(app, BearerAuth(settings, deps.audit))
+
+
+def health_route(deps: Deps) -> Any:
+    """Liveness + non-secret memory/store counters (stdlib only). /health
+    bypasses bearer auth, and infra probes must never 500 liveness — they
+    degrade to null instead."""
+    import resource
+    import sys
+
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def health(request: Any) -> JSONResponse:
+        try:
+            index = await deps.pipeline.health()
+        except BetterAIError:
+            index = None
+        try:
+            corpus_artifacts = len(deps.corpus.read())
+        except BetterAIError:
+            corpus_artifacts = None
+        ru_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # ru_maxrss is bytes on macOS but kilobytes on Linux.
+        rss_kb = ru_maxrss // 1024 if sys.platform == "darwin" else ru_maxrss
+        return JSONResponse(
+            {
+                "status": "ok",
+                "service": "betterai",
+                "sessions": deps.store.session_count(),
+                "rss_kb": rss_kb,
+                "corpus_artifacts": corpus_artifacts,
+                "index": index,
+            }
+        )
+
+    return Route("/health", health, methods=["GET"])
+
+
+def ops_routes(deps: Deps) -> list:
+    """Operator endpoints (bearer-protected like everything but /health).
+
+    These are NOT MCP tools on purpose: the agent tool surface (see
+    registry.TOOL_MODULES) grows only by explicit user decision;
+    reindex/ingest are `betterai` CLI operations."""
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def reindex(request: Any) -> JSONResponse:
+        try:
+            summary = await deps.pipeline.index_corpus(deps.corpus.read())
+        except BetterAIError as exc:
+            return JSONResponse(exc.envelope(), status_code=503)
+        deps.audit.record("reindex", summary)
+        return JSONResponse(summary)
+
+    async def ingest(request: Any) -> JSONResponse:
+        from app.ingest.pipeline import run_ingest
+
+        payload = await request.json()
+        url = payload.get("url") if isinstance(payload, dict) else None
+        if not isinstance(url, str) or not url:
+            return JSONResponse(
+                {"error": "BAI-121", "message": "POST /ingest needs {'url': <post url>}"},
+                status_code=400,
+            )
+        try:
+            summary = await run_ingest(url, deps)
+        except BetterAIError as exc:
+            return JSONResponse(exc.envelope(), status_code=exc.http_status)
+        return JSONResponse(summary)
+
+    async def sync(request: Any) -> JSONResponse:
+        try:
+            summary = await deps.sync.run_now(deps)
+        except BetterAIError as exc:
+            return JSONResponse(exc.envelope(), status_code=exc.http_status)
+        return JSONResponse(summary)
+
+    return [
+        Route("/ingest", ingest, methods=["POST"]),
+        Route("/reindex", reindex, methods=["POST"]),
+        Route("/sync", sync, methods=["POST"]),
+    ]
 
 
 def main() -> None:

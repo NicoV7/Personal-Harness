@@ -31,9 +31,18 @@ class ScoredArtifact:
 class Retrieval:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._vectorizer = make_vectorizer(settings)
+        # Lazy: constructing the vectorizer probes the embedding provider
+        # (redisvl validates the key with a live call). Boot must survive
+        # a provider outage — the probe happens on first use and surfaces
+        # as typed BAI-604 per query/index instead of a boot crash-loop.
+        self._vectorizer: OpenAITextVectorizer | None = None
         self._index = make_index(settings)
         self._artifacts: dict[str, Artifact] = {}
+
+    def _get_vectorizer(self) -> OpenAITextVectorizer:
+        if self._vectorizer is None:
+            self._vectorizer = make_vectorizer(self._settings)
+        return self._vectorizer
 
     async def query(
         self,
@@ -49,7 +58,7 @@ class Retrieval:
     ) -> list[ScoredArtifact]:
         hits = search(
             intent,
-            vectorizer=self._vectorizer,
+            vectorizer=self._get_vectorizer(),
             index=self._index,
             settings=self._settings,
             aspects=aspects,
@@ -73,14 +82,14 @@ class Retrieval:
 
     async def index_corpus(self, artifacts: list[Artifact]) -> dict:
         summary = ingest(
-            artifacts, vectorizer=self._vectorizer, index=self._index, settings=self._settings
+            artifacts, vectorizer=self._get_vectorizer(), index=self._index, settings=self._settings
         )
         self._remember(artifacts)
         return summary
 
     async def index_artifact(self, artifact: Artifact) -> None:
         ingest(
-            [artifact], vectorizer=self._vectorizer, index=self._index, settings=self._settings
+            [artifact], vectorizer=self._get_vectorizer(), index=self._index, settings=self._settings
         )
         self._remember([artifact])
 

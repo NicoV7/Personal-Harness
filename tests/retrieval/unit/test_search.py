@@ -118,6 +118,27 @@ class TestSelectionRule:
                 settings=settings,
             )
 
+    def test_keyword_only_union_members_are_skipped_not_fatal(self, settings):
+        # arrange: RRF unions both legs — a hit the vector leg never scored
+        # carries no vector_similarity and must be dropped, not crash the query
+        index = FakeIndex(
+            {
+                "network": [
+                    _hit("scored-hit", 0.9, text_score=1.0, title="network"),
+                    {"id": "keyword-only-hit", "text_score": "9.9", "title": "network"},
+                ]
+            }
+        )
+        # act
+        hits = search(
+            "network errors",
+            vectorizer=FakeVectorizer(),
+            index=index,
+            settings=settings,
+        )
+        # assert
+        assert [hit["id"] for hit in hits] == ["scored-hit"]
+
 
 class TestAspects:
     def test_each_aspect_runs_its_own_query_and_results_union(self, settings):

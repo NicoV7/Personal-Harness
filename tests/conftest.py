@@ -23,7 +23,9 @@ from app.corpus.schema import Artifact
 from app.deps import CallMeta, Deps
 from app.errors import BetterAIError
 from app.hooks.state import InMemorySessionStore
+from app.openrouter import ChatClientProvider
 from app.settings import Settings
+from app.sync.skills import SkillsSync
 
 RULE_BODY = """## What this rule says
 
@@ -156,6 +158,13 @@ def full_env(tmp_path: Path, corpus_root: Path) -> dict[str, str]:
         "BETTERAI_PLAN_GLOB": "**/.claude/plans/*.md",
         "BETTERAI_COMPOSE_FILE": str(tmp_path / "docker-compose.yml"),
         "BETTERAI_DOCKER_SOCK": str(tmp_path / "docker.sock"),
+        "BETTERAI_PROMPT_IMPROVER_MODEL": "off",
+        "BETTERAI_COMMENT_VERBOSITY": "default",
+        "BETTERAI_READ_GATE": "on",
+        "BETTERAI_RECEIPT_GATE": "on",
+        "BETTERAI_REQUIRED_READS_MAX": "5",
+        "BETTERAI_SKILLS_REPO_URL": "off",
+        "BETTERAI_SKILLS_SYNC_TTL": "3600",
     }
 
 
@@ -253,6 +262,8 @@ def deps(
         corpus=CorpusReader(str(corpus_root), repo_root=str(repo_root)),
         pipeline=pipeline,
         store=store,
+        chat=ChatClientProvider(settings),
+        sync=SkillsSync(),
     )
 
 

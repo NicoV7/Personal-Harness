@@ -85,6 +85,26 @@ class ContainerOpError(BetterAIError):
     code = "BAI-606"
 
 
+class SourceFetchError(BetterAIError):
+    code = "BAI-607"
+    http_status = 502
+
+
+class DistillError(BetterAIError):
+    code = "BAI-608"
+    http_status = 502
+
+
+class ExpansionError(BetterAIError):
+    code = "BAI-609"
+    http_status = 502
+
+
+class SkillsSyncError(BetterAIError):
+    code = "BAI-610"
+    http_status = 502
+
+
 class ReadGateError(BetterAIError):
     code = "BAI-700"
     http_status = 403
@@ -165,18 +185,39 @@ class Errors:
         return ContainerOpError(f"container operation failed: {detail}")
 
     @staticmethod
+    def source_fetch_failed(url: str, detail: str) -> SourceFetchError:
+        return SourceFetchError(f"source fetch failed for {url}: {detail}")
+
+    @staticmethod
+    def distill_failed(chunk_ref: str, detail: str) -> DistillError:
+        return DistillError(f"distillation failed for chunk {chunk_ref}: {detail}")
+
+    @staticmethod
+    def expansion_failed(detail: str) -> ExpansionError:
+        return ExpansionError(f"prompt expansion failed: {detail}")
+
+    @staticmethod
+    def skills_sync_failed(url: str, detail: str) -> SkillsSyncError:
+        return SkillsSyncError(f"skills sync failed for {url}: {detail}")
+
+    @staticmethod
     def read_gate_denied(skill_ids: Sequence[str]) -> ReadGateError:
         listing = ", ".join(skill_ids)
         return ReadGateError(
-            f"Read required BetterAI skills first: {listing}. "
-            "Call get_skill for every missing id before using ordinary tools."
+            f"Mutating tools are blocked until required BetterAI skills are read: {listing}. "
+            "They are normally served inline by the prompt hook; this deny means that "
+            "failed — call mcp__betterai__get_skill per id, or fix the stack "
+            "(betterai doctor). BETTERAI_READ_GATE=off is the explicit override."
         )
 
     @staticmethod
     def receipt_missing(tool_name: str) -> RetrievalReceiptMissingError:
         return RetrievalReceiptMissingError(
-            f"{tool_name} denied: call query_skills first this turn "
-            "(retrieval receipt required before mutating tools)"
+            f"{tool_name} denied: no retrieval receipt for this turn. The prompt "
+            "hook records it at delivery; this deny means that failed — check "
+            "the harness warning in the prompt context, fix the stack (betterai "
+            "doctor), or send a new message to start a fresh turn. "
+            "BETTERAI_RECEIPT_GATE=off is the explicit override."
         )
 
     @staticmethod

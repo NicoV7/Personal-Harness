@@ -3,7 +3,7 @@
 import pytest
 
 from app.errors import ConfigInvalidError, ConfigMissingError
-from app.settings import REQUIRED_KEYS, Settings
+from app.settings import REQUIRED_KEYS, CommentPolicy, Settings, parse_comment_policy
 
 FULL_ENV = {
     "BETTERAI_CORPUS_ROOT": "/data",
@@ -17,6 +17,7 @@ FULL_ENV = {
     "BETTERAI_OPENROUTER_API_KEY_FILE": "/data/openrouter-key",
     "BETTERAI_OPENROUTER_EMBEDDING_MODEL": "provider/embed-model",
     "BETTERAI_OPENROUTER_AGENT_MODEL": "provider/judge-model",
+    "BETTERAI_PROMPT_IMPROVER_MODEL": "provider/improver-model",
     "BETTERAI_EMBEDDING_DIM": "384",
     "BETTERAI_HYBRID_FUSION": "rrf",
     "BETTERAI_HYBRID_ALPHA": "0.7",
@@ -27,6 +28,12 @@ FULL_ENV = {
     "BETTERAI_PLAN_GLOB": "**/.claude/plans/*.md",
     "BETTERAI_COMPOSE_FILE": "/data/docker-compose.yml",
     "BETTERAI_DOCKER_SOCK": "/var/run/docker.sock",
+    "BETTERAI_COMMENT_VERBOSITY": "default",
+    "BETTERAI_READ_GATE": "on",
+    "BETTERAI_RECEIPT_GATE": "on",
+    "BETTERAI_REQUIRED_READS_MAX": "5",
+    "BETTERAI_SKILLS_REPO_URL": "https://github.test/nicov7/betterai-skills",
+    "BETTERAI_SKILLS_SYNC_TTL": "3600",
 }
 
 
@@ -91,6 +98,25 @@ class TestFromEnv:
         with pytest.raises(ConfigInvalidError):
             Settings.from_env(env)
 
+    def test_skills_repo_url_rejects_non_https(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_SKILLS_REPO_URL"] = "git@github.test:owner/repo.git"
+        # act
+        with pytest.raises(ConfigInvalidError) as excinfo:
+            Settings.from_env(env)
+        # assert
+        assert "BETTERAI_SKILLS_REPO_URL" in str(excinfo.value)
+
+    def test_skills_repo_url_off_disables_sync(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_SKILLS_REPO_URL"] = "off"
+        # act
+        settings = Settings.from_env(env)
+        # assert
+        assert settings.skills_repo_url == "off"
+
     def test_allowed_hosts_parses_comma_list(self):
         # arrange
         env = dict(FULL_ENV)
@@ -99,3 +125,43 @@ class TestFromEnv:
         settings = Settings.from_env(env)
         # assert
         assert settings.allowed_hosts == ("127.0.0.1:7777", "localhost:7777")
+
+
+class TestCommentPolicy:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("default", CommentPolicy("default")),
+            ("none", CommentPolicy("none")),
+            ("tokens:150", CommentPolicy("tokens", 150)),
+            ("lines:2", CommentPolicy("lines", 2)),
+        ],
+    )
+    def test_parses_every_mode(self, raw, expected):
+        assert parse_comment_policy(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw", ["", "verbose", "tokens", "tokens:", "tokens:abc", "lines:0", "default:3"]
+    )
+    def test_malformed_raises_value_error(self, raw):
+        with pytest.raises(ValueError):
+            parse_comment_policy(raw)
+
+    def test_from_env_wraps_malformed_as_bai_121(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_COMMENT_VERBOSITY"] = "lines:zero"
+        # act
+        with pytest.raises(ConfigInvalidError) as excinfo:
+            Settings.from_env(env)
+        # assert
+        assert "BETTERAI_COMMENT_VERBOSITY" in str(excinfo.value)
+
+    def test_from_env_parses_budget_mode(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_COMMENT_VERBOSITY"] = "tokens:200"
+        # act
+        settings = Settings.from_env(env)
+        # assert
+        assert settings.comment_verbosity == CommentPolicy("tokens", 200)
