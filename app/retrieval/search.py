@@ -43,6 +43,7 @@ SCORE_FIELDS = {
     "yield_combined_score_as": "hybrid_score",
 }
 _TOKEN = re.compile(r"[a-z0-9]{3,}")
+_FT_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 
 def search(
@@ -61,7 +62,10 @@ def search(
     vectors = _embed(vectorizer, queries)
     kept: dict[str, dict] = {}
     for query_text, vector in zip(queries, vectors):
-        hits = _run_hybrid(query_text, vector, index=index, settings=settings,
+        ft_text = _ft_text(query_text)
+        if not ft_text:
+            continue  # all-symbol prompt: the text leg has nothing to match
+        hits = _run_hybrid(ft_text, vector, index=index, settings=settings,
                            domain=domain, artifact_type=artifact_type)
         if hits and all(hit.get("vector_similarity") is None for hit in hits):
             raise Errors.query_error(
@@ -79,6 +83,12 @@ def search(
             _keep_best(kept, hit)
     ranked = sorted(kept.values(), key=hit_score, reverse=True)
     return ranked[:top_k] if top_k else ranked
+
+
+def _ft_text(query_text: str) -> str:
+    """Word tokens only: raw prompts (pasted JSON, transcripts) carry
+    RediSearch metacharacters that are FT syntax errors (BAI-602)."""
+    return " ".join(_FT_TOKEN.findall(query_text))
 
 
 def _query_texts(prompt: str, aspects: list[str] | None) -> list[str]:

@@ -64,6 +64,43 @@ def settings():
     return build_settings(embedding_dim=DIM, similarity_threshold=0.5)
 
 
+class TestFtSanitizer:
+    def test_json_prompt_reaches_index_without_metacharacters(self, settings):
+        # arrange: the BAI-602 regression — pasted JSON/transcript prompts
+        index = FakeIndex({"network": [_hit("relevant-rule", sim=0.8, text_score=2.5)]})
+        prompt = 'Edit failed {"block": true} @gate | (retry-now) "network" errors*'
+
+        # act
+        hits = search(prompt, vectorizer=FakeVectorizer(), index=index, settings=settings)
+
+        # assert
+        sent = index.queries[0].text
+        assert not set(sent) & set('{}"@|()*:~[]')
+        assert "network" in sent
+        assert [hit["id"] for hit in hits] == ["relevant-rule"]
+
+    def test_all_symbol_prompt_skips_text_leg_instead_of_crashing(self, settings):
+        # arrange
+        index = FakeIndex({"anything": [_hit("x", sim=0.9)]})
+
+        # act
+        hits = search('{}[]()*@|~"', vectorizer=FakeVectorizer(), index=index, settings=settings)
+
+        # assert: no query reaches redis, no crash, honest empty result
+        assert hits == []
+        assert index.queries == []
+
+    def test_short_tokens_survive_sanitizing(self, settings):
+        # arrange: FT tokens keep 1-2 char words the keyword tokenizer drops
+        index = FakeIndex({"go db": [_hit("go-db-rule", sim=0.8, text_score=1.0)]})
+
+        # act
+        hits = search("fix go db {bug}", vectorizer=FakeVectorizer(), index=index, settings=settings)
+
+        # assert
+        assert [hit["id"] for hit in hits] == ["go-db-rule"]
+
+
 class TestSelectionRule:
     def test_keeps_only_above_threshold_with_keyword_match(self, settings):
         # arrange
