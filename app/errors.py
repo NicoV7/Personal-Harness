@@ -195,8 +195,10 @@ class Errors:
     def read_gate_denied(skill_ids: Sequence[str]) -> ReadGateError:
         listing = ", ".join(skill_ids)
         return ReadGateError(
-            f"Read required BetterAI skills first: {listing}. "
-            "Call get_skill for every missing id before using ordinary tools."
+            f"Mutating tools are blocked until required BetterAI skills are read: {listing}. "
+            "They are normally served inline by the prompt hook; this deny means that "
+            "failed — call mcp__betterai__get_skill per id, or fix the stack "
+            "(betterai doctor). BETTERAI_READ_GATE=off is the explicit override."
         )
 
     @staticmethod

@@ -158,6 +158,8 @@ def full_env(tmp_path: Path, corpus_root: Path) -> dict[str, str]:
         "BETTERAI_DOCKER_SOCK": str(tmp_path / "docker.sock"),
         "BETTERAI_PROMPT_IMPROVER_MODEL": "off",
         "BETTERAI_COMMENT_VERBOSITY": "default",
+        "BETTERAI_READ_GATE": "on",
+        "BETTERAI_REQUIRED_READS_MAX": "5",
     }
 
 

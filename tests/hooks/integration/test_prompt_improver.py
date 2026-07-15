@@ -107,7 +107,7 @@ class TestPromptImprover:
 
 
 class TestPlanModeSurfacing:
-    def test_plan_write_unions_required_skills_and_instructs_reads(self, tmp_path):
+    def test_plan_write_serves_matched_skills_inline(self, tmp_path):
         # arrange
         pipeline = FakePipeline(results=[FakeScored(make_skill("write-scoped-plan"))])
         client, deps = _client_and_deps(tmp_path, pipeline=pipeline)
@@ -122,10 +122,10 @@ class TestPlanModeSurfacing:
             },
         ).json()
 
-        # assert
-        assert "write-scoped-plan" in read_store.missing(deps.store, SESSION)
+        # assert: served inline + receipted at delivery, nothing left unread
+        assert read_store.missing(deps.store, SESSION) == []
         context = body["hookSpecificOutput"]["additionalContext"]
-        assert "plan-mode skills surfaced" in context
+        assert "## BetterAI required skill: write-scoped-plan" in context
         assert pipeline.queries[-1]["intent"].startswith("Plan: harden the http client")
 
     def test_non_plan_write_does_not_query(self, tmp_path):

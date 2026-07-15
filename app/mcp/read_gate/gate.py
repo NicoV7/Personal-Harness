@@ -1,10 +1,14 @@
 """Read-gate hook handlers.
 
-Behavior ported from src/hooks/routes.ts + src/runtime/read-receipts.ts:
-ordinary tools are denied while required skills are unread, bootstrap
-tools (the BetterAI surface itself) always pass so the agent can satisfy
-the gate, Stop blocks exactly once, and a null session_id disables
-gating entirely.
+Scope (post-deadlock redesign): only MUTATING tools are denied while
+required skills are unread — read-only tools, ToolSearch, and subagent
+spawns always pass, so a session can always diagnose a failed state.
+The prompt hook SERVES required skill bodies and marks their receipts
+at delivery, so the normal path never trips this gate; a trip means the
+stack failed and the deny is the loud, non-retried consequence.
+BETTERAI_READ_GATE=off is the explicit escape hatch (deny only —
+delivery, receipts, and audit still run). Stop blocks exactly once; a
+null session_id disables gating entirely.
 """
 
 from __future__ import annotations
@@ -55,6 +59,10 @@ class DenyUntilReadHandler:
     def handle(self, event: HookEvent, deps: Deps) -> HookDecision | None:
         assert isinstance(event, PreToolUse)
         if not event.session_id or _is_bootstrap_tool(event.tool_name):
+            return None
+        if event.tool_name not in registry.MUTATING_TOOL_NAMES:
+            return None
+        if deps.settings.read_gate == "off":
             return None
         missing = read_store.missing(deps.store, event.session_id)
         if not missing:

@@ -29,6 +29,8 @@ FULL_ENV = {
     "BETTERAI_COMPOSE_FILE": "/data/docker-compose.yml",
     "BETTERAI_DOCKER_SOCK": "/var/run/docker.sock",
     "BETTERAI_COMMENT_VERBOSITY": "default",
+    "BETTERAI_READ_GATE": "on",
+    "BETTERAI_REQUIRED_READS_MAX": "5",
 }
 
 

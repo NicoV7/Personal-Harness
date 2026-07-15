@@ -32,7 +32,7 @@ from pathlib import Path
 from app.errors import Errors
 from app.settings import REQUIRED_KEYS
 
-BETTERAI_IMAGE = "ghcr.io/nicov7/personal-harness-py:0.4.0"
+BETTERAI_IMAGE = "ghcr.io/nicov7/personal-harness-py:0.4.1"
 SUPERGATEWAY_IMAGE = "supercorp/supergateway:3.4.3"
 REDIS_IMAGE = "redis:8.8"
 POSTGRES_IMAGE = "pgvector/pgvector:0.8.4-pg17-bookworm"
@@ -85,6 +85,8 @@ def install_env_values(home: str, overrides: dict | None = None) -> dict[str, st
         "BETTERAI_COMPOSE_FILE": f"{CONTAINER_DATA}/docker-compose.yml",
         "BETTERAI_DOCKER_SOCK": DOCKER_SOCK,
         "BETTERAI_COMMENT_VERBOSITY": "default",
+        "BETTERAI_READ_GATE": "on",
+        "BETTERAI_REQUIRED_READS_MAX": "5",
     }
     values.update(overrides or {})
     if not values.get("BETTERAI_PROMPT_IMPROVER_MODEL"):

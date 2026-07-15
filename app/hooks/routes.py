@@ -47,11 +47,17 @@ def hook_routes(deps: Deps) -> list[Route]:
         prompt = _str_field(body, "prompt", "user_prompt", "message", "text")
         cwd = _str_field(body, "cwd") or None
         chain.run(UserPromptSubmit(session_id=session_id, prompt=prompt, cwd=cwd), deps)
-        required, skills, warning = await _retrieve_required(deps, prompt)
+        artifacts, skills, warning = await _retrieve_required(deps, prompt)
+        required = [artifact.id for artifact in artifacts]
+        served = artifacts if warning is None else []
         if session_id:
             read_store.set_required(deps.store, session_id, required)
             if warning is None:
                 receipt_store.mark_retrieved(deps.store, session_id)
+                # Delivery IS the read event: bodies ride this response, so
+                # receipts are marked here — no get_skill round-trips needed.
+                for artifact in served:
+                    read_store.mark_read(deps.store, session_id, artifact.id)
         return JSONResponse(
             {
                 "ok": True,
@@ -60,11 +66,11 @@ def hook_routes(deps: Deps) -> list[Route]:
                 "required_skill_ids": required,
                 "missing_skill_ids": read_store.missing(deps.store, session_id),
                 "skills": skills,
-                "instruction": _instruction(required),
+                "instruction": _instruction(served),
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
                     "additionalContext": _prompt_context(
-                        required, warning, _comment_policy_line(deps)
+                        served, warning, _comment_policy_line(deps)
                     ),
                 },
             }
@@ -191,14 +197,16 @@ def _stop_payload(
 
 async def _retrieve_required(
     deps: Deps, prompt: str
-) -> tuple[list[str], list[dict], str | None]:
-    """Server-side retrieval for the turn: (required ids, summaries, warning).
+) -> tuple[list, list[dict], str | None]:
+    """Server-side retrieval: (capped required artifacts, summaries, warning).
 
-    A typed infra failure must be VISIBLE (warning carried into
-    additionalContext) but must not 500 the hook; forced skills still
-    apply because the corpus is local.
+    Forced artifacts lead, scored ones follow, truncated to
+    required_reads_max — the cap bounds both the receipts and the served
+    body bytes. A typed infra failure must be VISIBLE (warning carried
+    into additionalContext) but must not 500 the hook; on failure the
+    forced set is still REQUIRED (unread), so mutating tools stay denied.
     """
-    forced_ids, forced_warning = _forced_skill_ids(deps)
+    forced_artifacts, forced_warning = _forced_artifacts(deps)
     expansion, expansion_warning = _expand(deps, prompt)
     try:
         results = await deps.pipeline.query(
@@ -214,13 +222,17 @@ async def _retrieve_required(
             forced_warning,
             expansion_warning,
         )
-        return forced_ids, [], warning
-    artifacts = [getattr(result, "artifact", result) for result in results]
-    skills = [a for a in artifacts if getattr(a, "artifact_type", "skill") == "skill"]
-    ids = [skill.id for skill in skills]
-    ids += [forced for forced in forced_ids if forced not in ids]
-    summaries = [_skill_summary(skill) for skill in skills]
-    return ids, summaries, _join_warnings(forced_warning, expansion_warning)
+        return _cap_required(forced_artifacts, [], deps.settings.required_reads_max), [], warning
+    scored = [getattr(result, "artifact", result) for result in results]
+    required = _cap_required(forced_artifacts, scored, deps.settings.required_reads_max)
+    summaries = [_skill_summary(a) for a in scored if getattr(a, "artifact_type", "skill") == "skill"]
+    return required, summaries, _join_warnings(forced_warning, expansion_warning)
+
+
+def _cap_required(forced: list, scored: list, limit: int) -> list:
+    forced_ids = {artifact.id for artifact in forced}
+    ordered = [*forced, *[a for a in scored if a.id not in forced_ids]]
+    return ordered[:limit]
 
 
 def _expand(deps: Deps, prompt: str) -> tuple[Expansion, str | None]:
@@ -268,18 +280,21 @@ async def _surface_plan_skills(deps: Deps, event: PostToolUse) -> str | None:
             "The plan proceeds without extra skill requirements."
         )
     artifacts = [getattr(result, "artifact", result) for result in results]
-    skills = [a for a in artifacts if getattr(a, "artifact_type", "skill") == "skill"]
-    if not skills:
+    served = artifacts[: deps.settings.required_reads_max]
+    if not served:
         return None
-    ids = [skill.id for skill in skills]
+    ids = [artifact.id for artifact in served]
     read_store.mark_required(deps.store, event.session_id, ids)
+    for artifact in served:
+        read_store.mark_read(deps.store, event.session_id, artifact.id)
+    sections = "\n".join(_served_section(artifact) for artifact in served)
     return (
-        "BetterAI plan-mode skills surfaced for this plan: call get_skill for "
-        f"{', '.join(ids)} before implementing."
+        "BetterAI plan-mode skills for this plan are served below "
+        f"(receipts recorded at delivery).\n{sections}"
     )
 
 
-def _forced_skill_ids(deps: Deps) -> tuple[list[str], str | None]:
+def _forced_artifacts(deps: Deps) -> tuple[list, str | None]:
     """Forced artifacts are injected regardless of score; the
     incremental-edit skill only applies while a budget is active.
     A corpus read failure must be VISIBLE: silently returning [] would
@@ -292,13 +307,13 @@ def _forced_skill_ids(deps: Deps) -> tuple[list[str], str | None]:
             "Forced skills could NOT be injected this turn; fix the corpus."
         )
     granularity = deps.settings.edit_granularity
-    ids = [
-        artifact.id
+    forced = [
+        artifact
         for artifact in artifacts
         if getattr(artifact, "forced", False)
         and not (artifact.id == EDIT_INCREMENTALLY_SKILL_ID and granularity == "none")
     ]
-    return ids, None
+    return forced, None
 
 
 def _join_warnings(*warnings: str | None) -> str | None:
@@ -316,34 +331,42 @@ def _skill_summary(skill: Any) -> dict:
     }
 
 
-def _instruction(required: list[str]) -> str:
-    if not required:
+def _instruction(served: list) -> str:
+    if not served:
         return "No required skills matched this prompt."
     return (
-        "Call get_skill for every required_skill_id before planning, "
-        "answering, or using ordinary tools."
+        "The required skills are served inline in additionalContext and "
+        "already receipted — apply them; call get_skill only for deeper reads."
     )
 
 
 def _prompt_context(
-    required: list[str], warning: str | None, comment_line: str | None = None
+    served: list, warning: str | None, comment_line: str | None = None
 ) -> str:
     lines = [warning] if warning else []
-    if not required:
+    if not served:
         lines.append(
             "BetterAI retrieved context for this prompt. No harness skills "
             "matched, so continue normally."
+            if warning is None
+            else "Required skills could NOT be served this turn; mutating "
+            "tools stay denied until the stack is fixed (betterai doctor)."
         )
     else:
-        lines += [
-            "BetterAI retrieved required harness skills for this prompt.",
-            "Before planning, answering, or using ordinary tools, call "
-            "get_skill for every required_skill_id.",
-            f"Required BetterAI skill reads: {', '.join(required)}.",
-        ]
+        lines.append(
+            "BetterAI required skills for this prompt are served below "
+            "(receipts recorded at delivery). Apply them while working."
+        )
+        lines += [_served_section(artifact) for artifact in served]
     if comment_line:
         lines.append(comment_line)
     return "\n".join(lines)
+
+
+def _served_section(artifact) -> str:
+    title = getattr(artifact, "title", artifact.id)
+    body = (getattr(artifact, "body", "") or "").strip()
+    return f"## BetterAI required skill: {artifact.id} — {title}\n{body}"
 
 
 def _comment_policy_line(deps: Deps) -> str | None:

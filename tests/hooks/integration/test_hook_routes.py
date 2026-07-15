@@ -13,6 +13,7 @@ from starlette.testclient import TestClient
 from app.errors import Errors
 from app.hooks.routes import hook_routes
 from app.mcp.read_gate import store as read_store
+from app.mcp.retrieval_receipt_gate import store as receipt_store
 from tests.mcp.gate_helpers import (
     FakeCorpus,
     FakePipeline,
@@ -40,7 +41,7 @@ def _matching_pipeline():
     return FakePipeline(results=[FakeScored(make_skill("rename-safely"))])
 
 
-def test_prompt_names_required_skills_and_instructs_get_skill(tmp_path):
+def test_prompt_serves_required_skill_bodies_and_marks_receipts(tmp_path):
     # arrange
     client, _ = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
 
@@ -50,56 +51,53 @@ def test_prompt_names_required_skills_and_instructs_get_skill(tmp_path):
         json={"session_id": SESSION, "prompt": "rename a variable safely"},
     )
 
-    # assert
+    # assert: bodies ride the response and receipts are marked at delivery
     assert response.status_code == 200
     body = response.json()
     assert body["required_skill_ids"] == ["rename-safely"]
-    assert body["missing_skill_ids"] == ["rename-safely"]
+    assert body["missing_skill_ids"] == []
     assert body["skills"][0]["id"] == "rename-safely"
-    assert "get_skill" in body["hookSpecificOutput"]["additionalContext"]
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "## BetterAI required skill: rename-safely" in context
     assert body["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
 
-def test_pre_tool_use_denies_with_ts_spec_shape_until_skill_read(tmp_path):
-    # arrange
+def test_pre_tool_use_denies_mutations_only_while_unread(tmp_path):
+    # arrange: unread required state (as after a retrieval failure)
     client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
-    client.post(
-        "/hooks/user-prompt-submit",
-        json={"session_id": SESSION, "prompt": "rename a variable safely"},
-    )
+    read_store.set_required(deps.store, SESSION, ["rename-safely"])
+    receipt_store.mark_retrieved(deps.store, SESSION)
 
     # act
     blocked = client.post(
+        "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "Edit"}
+    ).json()
+    read_only = client.post(
         "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "Read"}
     ).json()
-    bootstrap = client.post(
-        "/hooks/pre-tool-use",
-        json={"session_id": SESSION, "tool_name": "mcp__betterai__get_skill"},
+    loader = client.post(
+        "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "ToolSearch"}
     ).json()
     read_store.mark_read(deps.store, SESSION, "rename-safely")
     allowed = client.post(
-        "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "Read"}
+        "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "Edit"}
     ).json()
 
     # assert
     assert blocked["block"] is True
     assert blocked["permissionDecision"] == "deny"
     assert blocked["missing_skill_ids"] == ["rename-safely"]
-    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "rename-safely" in blocked["hookSpecificOutput"]["permissionDecisionReason"]
-    assert bootstrap["block"] is False
+    assert read_only["block"] is False
+    assert loader["block"] is False
     assert allowed["block"] is False
-    assert allowed["permissionDecision"] == "allow"
     assert allowed["missing_skill_ids"] == []
 
 
 def test_stop_blocks_exactly_once_then_passes(tmp_path):
-    # arrange
-    client, _ = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
-    client.post(
-        "/hooks/user-prompt-submit",
-        json={"session_id": SESSION, "prompt": "rename a variable safely"},
-    )
+    # arrange: unread required state (serving marks receipts, so force it)
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+    read_store.set_required(deps.store, SESSION, ["rename-safely"])
 
     # act
     first = client.post("/hooks/stop", json={"session_id": SESSION}).json()

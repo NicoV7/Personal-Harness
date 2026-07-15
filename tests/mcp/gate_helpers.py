@@ -45,6 +45,8 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "compose_file": str(tmp_path / "compose.yaml"),
         "docker_sock": "/var/run/docker.sock",
         "comment_verbosity": CommentPolicy("default"),
+        "read_gate": "on",
+        "required_reads_max": 5,
     }
     values.update(overrides)
     return Settings(**values)

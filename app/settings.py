@@ -17,6 +17,7 @@ EDIT_GRANULARITIES = ("function", "file", "none")
 HYBRID_FUSIONS = ("linear", "rrf")
 MEMORY_PROVIDERS = ("basic-memory", "cognee", "none")
 COMMENT_MODES = ("default", "none", "tokens", "lines")
+READ_GATE_MODES = ("on", "off")
 
 REQUIRED_KEYS = (
     "BETTERAI_CORPUS_ROOT",
@@ -42,6 +43,8 @@ REQUIRED_KEYS = (
     "BETTERAI_COMPOSE_FILE",
     "BETTERAI_DOCKER_SOCK",
     "BETTERAI_COMMENT_VERBOSITY",
+    "BETTERAI_READ_GATE",
+    "BETTERAI_REQUIRED_READS_MAX",
 )
 
 # Present-but-unset is allowed only for keys whose absence is a meaningful
@@ -106,6 +109,8 @@ class Settings:
     compose_file: str
     docker_sock: str
     comment_verbosity: CommentPolicy
+    read_gate: str  # "off" is the explicit escape hatch: delivery/receipts/audit still run
+    required_reads_max: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -137,6 +142,8 @@ class Settings:
             compose_file=env["BETTERAI_COMPOSE_FILE"],
             docker_sock=env["BETTERAI_DOCKER_SOCK"],
             comment_verbosity=_comment_policy(env, "BETTERAI_COMMENT_VERBOSITY"),
+            read_gate=_choice(env, "BETTERAI_READ_GATE", READ_GATE_MODES),
+            required_reads_max=_positive_int(env, "BETTERAI_REQUIRED_READS_MAX"),
         )
 
 
@@ -168,6 +175,13 @@ def _choice(env: Mapping[str, str], key: str, allowed: tuple[str, ...]) -> str:
     if raw not in allowed:
         raise Errors.config_invalid(key, f"expected one of {allowed}, got {raw!r}")
     return raw
+
+
+def _positive_int(env: Mapping[str, str], key: str) -> int:
+    value = _int(env, key)
+    if value < 1:
+        raise Errors.config_invalid(key, f"expected an integer >= 1, got {value}")
+    return value
 
 
 def _comment_policy(env: Mapping[str, str], key: str) -> CommentPolicy:

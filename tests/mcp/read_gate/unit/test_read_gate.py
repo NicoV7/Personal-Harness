@@ -7,7 +7,7 @@ from app.hooks.events import PreToolUse, SessionEnd, Stop, UserPromptSubmit
 from app.mcp import registry
 from app.mcp.read_gate import store as read_store
 from app.mcp.read_gate.gate import HANDLERS
-from tests.mcp.gate_helpers import audit_events, make_deps
+from tests.mcp.gate_helpers import audit_events, make_deps, make_settings
 
 SESSION = "sess-1"
 
@@ -19,26 +19,59 @@ def _begin_turn(deps, session_id, required):
     read_store.set_required(deps.store, session_id, required)
 
 
-def test_blocks_ordinary_tools_until_required_skills_are_read(tmp_path):
+def test_blocks_mutating_tools_until_required_skills_are_read(tmp_path):
     # arrange
     deps = make_deps(tmp_path)
     _begin_turn(deps, SESSION, ["rename-safely"])
 
     # act
     blocked = HANDLERS[PreToolUse].handle(
-        PreToolUse(session_id=SESSION, tool_name="Read"), deps
+        PreToolUse(session_id=SESSION, tool_name="Edit"), deps
     )
     read_store.mark_read(deps.store, SESSION, "rename-safely")
     allowed = HANDLERS[PreToolUse].handle(
-        PreToolUse(session_id=SESSION, tool_name="Read"), deps
+        PreToolUse(session_id=SESSION, tool_name="Edit"), deps
     )
 
     # assert
     assert blocked is not None and blocked.deny is True
     assert "rename-safely" in blocked.reason
-    assert "get_skill" in blocked.reason
+    assert "mcp__betterai__get_skill" in blocked.reason
     assert blocked.error_code == "BAI-700"
     assert allowed is None
+
+
+def test_read_only_tools_and_loader_always_pass_while_unread(tmp_path):
+    # arrange: the deadlock regression — a session with zero loaded MCP
+    # tools must still be able to Read/search/load tools
+    deps = make_deps(tmp_path)
+    _begin_turn(deps, SESSION, ["rename-safely"])
+
+    # act
+    decisions = [
+        HANDLERS[PreToolUse].handle(
+            PreToolUse(session_id=SESSION, tool_name=name), deps
+        )
+        for name in ("Read", "ToolSearch", "Bash", "Grep", "Agent")
+    ]
+
+    # assert
+    assert decisions == [None, None, None, None, None]
+
+
+def test_read_gate_off_disables_deny_only(tmp_path):
+    # arrange: explicit escape hatch — deny off, receipts still tracked
+    deps = make_deps(tmp_path, settings=make_settings(tmp_path, read_gate="off"))
+    _begin_turn(deps, SESSION, ["rename-safely"])
+
+    # act
+    allowed = HANDLERS[PreToolUse].handle(
+        PreToolUse(session_id=SESSION, tool_name="Edit"), deps
+    )
+
+    # assert
+    assert allowed is None
+    assert read_store.missing(deps.store, SESSION) == ["rename-safely"]
 
 
 def test_bootstrap_tools_allowed_while_blocked(tmp_path):
@@ -94,13 +127,13 @@ def test_new_prompt_resets_required_skill_receipts(tmp_path):
     deps = make_deps(tmp_path)
     _begin_turn(deps, "sess-3", ["rename-safely"])
     blocked = HANDLERS[PreToolUse].handle(
-        PreToolUse(session_id="sess-3", tool_name="Read"), deps
+        PreToolUse(session_id="sess-3", tool_name="Edit"), deps
     )
 
     # act: a non-matching prompt begins a new turn with an empty required set
     _begin_turn(deps, "sess-3", [])
     allowed = HANDLERS[PreToolUse].handle(
-        PreToolUse(session_id="sess-3", tool_name="Read"), deps
+        PreToolUse(session_id="sess-3", tool_name="Edit"), deps
     )
 
     # assert

@@ -96,7 +96,13 @@ def _user_prompt(
     rubric_lines = "\n".join(
         f"- {c.id} (weight {c.weight}): {c.criterion}" for c in criteria
     )
-    sections = [f"Task:\n{fixture['task_description']}", f"Rubric:\n{rubric_lines}"]
+    id_listing = ", ".join(c.id for c in criteria)
+    sections = [
+        f"Task:\n{fixture['task_description']}",
+        f"Rubric:\n{rubric_lines}",
+        "Your scores object MUST contain an integer 0, 1, or 2 for EVERY one "
+        f"of these criterion ids (no omissions, no nulls): {id_listing}",
+    ]
     for label in ("X", "Y"):
         diff = Path(by_arm[mapping[label]].diff_path).read_text()[:_DIFF_MAX_CHARS]
         sections.append(f"Solution {label} diff:\n```diff\n{redact_markers(diff)}\n```")
@@ -120,7 +126,14 @@ def _parse(
         label_scores = scores_by_label.get(label)
         if not isinstance(label_scores, dict):
             raise Errors.distill_failed(ref, f"no scores for solution {label}")
-        scores[arm] = {c.id: _verdict(ref, label_scores.get(c.id)) for c in criteria}
+        bad = [c.id for c in criteria if not _valid_verdict(label_scores.get(c.id))]
+        if bad:
+            raise Errors.distill_failed(
+                ref,
+                f"solution {label} verdict missing/invalid (must be 0|1|2) for "
+                f"criteria: {', '.join(bad)}",
+            )
+        scores[arm] = {c.id: int(label_scores[c.id]) for c in criteria}
     winner = "tie" if winner_label == "tie" else mapping[winner_label]
     return JudgeResult(
         scores=scores,
@@ -130,7 +143,5 @@ def _parse(
     )
 
 
-def _verdict(ref: str, value: object) -> int:
-    if isinstance(value, int) and value in VERDICTS:
-        return value
-    raise Errors.distill_failed(ref, f"criterion verdict {value!r} is not 0|1|2")
+def _valid_verdict(value: object) -> bool:
+    return isinstance(value, int) and value in VERDICTS

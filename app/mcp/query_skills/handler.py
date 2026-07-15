@@ -141,6 +141,7 @@ def _require_skill_reads(deps: Deps, meta: CallMeta, rows: list[dict]) -> None:
     if meta.agent_session_id is None:
         return
     skill_ids = [row["id"] for row in rows if row["artifact_type"] == "skill"]
+    skill_ids = skill_ids[: deps.settings.required_reads_max]
     if not skill_ids:
         return
     existing = deps.store.get(meta.agent_session_id, "read_gate", "required") or []

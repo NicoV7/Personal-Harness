@@ -40,6 +40,10 @@ def list_fixtures(fixtures_dir: Path) -> list[dict]:
     return [load_fixture(path) for path in paths]
 
 
+_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+MAX_CORPUS_CRITERIA = 10
+
+
 def compile_rubric(
     fixture: dict, blog_rubric_path: Path, served_artifacts: list = ()
 ) -> list[Criterion]:
@@ -57,6 +61,14 @@ def compile_rubric(
         )
         for row in blog.get("criteria", [])
     ]
+    forced_rules = [
+        artifact
+        for artifact in served_artifacts
+        if getattr(artifact, "forced", False) and getattr(artifact, "artifact_type", "") == "rule"
+    ]
+    # Cap keeps the rubric within small-judge reliability (BAI-608 post-mortem:
+    # 42 forced rules -> 50+ criteria -> incomplete verdicts).
+    forced_rules.sort(key=lambda a: (_SEVERITY_RANK.get(getattr(a, "severity", None), 3), a.id))
     criteria += [
         Criterion(
             f"corpus-{artifact.id}",
@@ -64,8 +76,7 @@ def compile_rubric(
             f"{artifact.title}: {_rule_excerpt(artifact.body)}",
             "corpus",
         )
-        for artifact in served_artifacts
-        if getattr(artifact, "forced", False) and getattr(artifact, "artifact_type", "") == "rule"
+        for artifact in forced_rules[:MAX_CORPUS_CRITERIA]
     ]
     deduped: dict[str, Criterion] = {}
     for criterion in criteria:

@@ -37,7 +37,7 @@ Otherwise:
   "artifact_type": "rule" | "skill", // rule = constraint (DO/DON'T); skill = procedure (HOW, step by step)
   "title": "one-line imperative",
   "severity": "low" | "medium" | "high",  // rules only: high = violating it ships defects/breaches
-  "forced": true | false,           // true ONLY for MUST/NEVER-level rules that apply to nearly all coding work
+  "forced": true | false,           // true ONLY for rules that apply to nearly EVERY coding task regardless of domain; at most 1-2 per whole post; when unsure, false
   "when_to_use": "one sentence: the coding situation where this applies",
   "intents": ["5-10 short keyword phrases a coding agent would match on, e.g. 'http client', 'retry logic'"],
   "body": "markdown"
