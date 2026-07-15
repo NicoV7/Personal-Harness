@@ -39,10 +39,13 @@ tools before loading the matched BetterAI skills for the current prompt.
    session turn.
 2. Confirm the hook injects context that tells the agent to call `get_skill`
    for every matched skill before planning, answering, or ordinary tool use.
-3. Confirm `PreToolUse` blocks ordinary tools while required skills are unread
-   but still allows BetterAI bootstrap tools such as `query_skills` and
-   `get_skill`.
-4. Confirm the retrieval-receipt gate denies mutating tools when `query_skills`
+3. Confirm the prompt hook SERVES required skill bodies inline (forced-first,
+   capped by BETTERAI_REQUIRED_READS_MAX) and marks read receipts at delivery.
+4. Confirm `PreToolUse` blocks only MUTATING tools (Edit/Write/MultiEdit/
+   NotebookEdit) while required skills are unread; read-only tools, ToolSearch,
+   and subagent spawns always pass (deadlock post-mortem 2026-07-15), and
+   BETTERAI_READ_GATE=off disables only the deny.
+5. Confirm the retrieval-receipt gate denies mutating tools when `query_skills`
    has not run this turn (BAI-701), and that the companion gates in the same
    chain keep their contracts: plan-manifest denies out-of-manifest Edit/Write
    (BAI-702) and edit-budget denies over-budget mutations (BAI-703).
