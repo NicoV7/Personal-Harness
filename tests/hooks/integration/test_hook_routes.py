@@ -22,6 +22,7 @@ from tests.mcp.gate_helpers import (
     FakeCorpus,
     FakePipeline,
     FakeScored,
+    audit_events,
     make_deps,
     make_settings,
     make_skill,
@@ -168,6 +169,37 @@ def test_retrieval_failure_releases_gating_with_visible_bai601_context(tmp_path)
     assert "released" in context
     assert body["missing_skill_ids"] == []
     assert write_after_failure["block"] is False
+
+
+def test_never_served_session_edit_allowed_with_wiring_warning(tmp_path):
+    # arrange: broken client wiring — no prompt POST ever for this session
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+
+    # act
+    body = client.post(
+        "/hooks/pre-tool-use", json={"session_id": "never-served", "tool_name": "Edit"}
+    ).json()
+
+    # assert
+    assert body["block"] is False
+    assert "hook wiring" in body["hookSpecificOutput"]["additionalContext"]
+    assert any(e["event_type"] == "gate_bypass_no_evidence" for e in audit_events(deps))
+
+
+def test_prompt_serve_is_audited_with_session_id(tmp_path):
+    # arrange
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+
+    # act
+    client.post(
+        "/hooks/user-prompt-submit",
+        json={"session_id": SESSION, "prompt": "rename a variable safely"},
+    )
+
+    # assert
+    serve = [e for e in audit_events(deps) if e["event_type"] == "prompt_serve"]
+    assert serve and serve[-1]["agent_session_id"] == SESSION
+    assert serve[-1]["payload"]["required"] == ["rename-safely"]
 
 
 def _sync_marker(settings, state: dict) -> None:

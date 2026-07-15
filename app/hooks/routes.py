@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from app.deps import Deps
+from app.deps import CallMeta, Deps
 from app.errors import BetterAIError
 from app.hooks.events import HookDecision, PostToolUse, PreToolUse, SessionEnd, Stop, UserPromptSubmit
 from app.mcp import registry
@@ -57,8 +57,19 @@ def hook_routes(deps: Deps) -> list[Route]:
                 deps.store, session_id, required if warning is None else []
             )
             receipt_store.mark_retrieved(deps.store, session_id)
+            receipt_store.mark_prompt_seen(deps.store, session_id)
             for artifact in served:
                 read_store.mark_read(deps.store, session_id, artifact.id)
+            deps.audit.record(
+                "prompt_serve",
+                {"required": required, "served": len(served), "warning": bool(warning)},
+                CallMeta(
+                    agent_session_id=session_id,
+                    parent_agent_session_id=None,
+                    subagent_class="main",
+                    tool_call_id="hook.user_prompt_submit",
+                ),
+            )
         return JSONResponse(
             {
                 "ok": True,
@@ -146,6 +157,8 @@ def _pre_tool_payload(
     base = {"session_id": session_id, "tool_name": tool_name, "missing_skill_ids": missing}
     if not decision.deny:
         hook_output = {"hookEventName": "PreToolUse", "permissionDecision": "allow"}
+        if decision.additional_context:
+            hook_output["additionalContext"] = decision.additional_context
         return {
             "ok": True,
             "block": False,

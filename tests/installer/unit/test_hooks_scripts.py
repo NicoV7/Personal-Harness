@@ -25,7 +25,8 @@ def test_scripts_fail_open_and_exit_two_only_on_block(tmp_path: Path) -> None:
     # assert
     for name in HOOK_NAMES:
         body = (tmp_path / ".betterai" / "hooks" / name).read_text()
-        assert "|| true" in body, f"{name} must fail open on transport errors"
+        assert "hook-errors.log" in body, f"{name} must log transport failures"
+        assert "--connect-timeout 2" in body and "--max-time 5" in body
         assert '"block":true' in body and "exit 2" in body
         assert f"http://127.0.0.1:7777/hooks/{name}" in body
         assert "Authorization: Bearer" in body

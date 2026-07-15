@@ -25,3 +25,21 @@ def has_retrieved(store: SessionStore, session_id: str | None) -> bool:
     if not session_id:
         return False
     return bool(store.get(session_id, NAMESPACE, RETRIEVED_KEY))
+
+
+# Session-scoped delivery evidence (NOT in TURN_NAMESPACES): survives
+# turns, dies with the session — absence means the hook never ran here.
+EVIDENCE_NAMESPACE = "prompt_evidence"
+PROMPT_SEEN_KEY = "seen"
+
+
+def mark_prompt_seen(store: SessionStore, session_id: str | None) -> None:
+    if not session_id:
+        return
+    store.set(session_id, EVIDENCE_NAMESPACE, PROMPT_SEEN_KEY, True)
+
+
+def prompt_seen(store: SessionStore, session_id: str | None) -> bool:
+    if not session_id:
+        return False
+    return bool(store.get(session_id, EVIDENCE_NAMESPACE, PROMPT_SEEN_KEY))
