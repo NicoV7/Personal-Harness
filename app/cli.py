@@ -240,6 +240,15 @@ def ingest(url: str = typer.Argument(..., help="Blog post URL to distill into th
     typer.echo(json.dumps(result))
 
 
+@app.command()
+def sync() -> None:
+    """Force a skills-repo pull into the corpus (and reindex) via POST /sync."""
+    result = _fail_loud(
+        lambda: server_post(_user_home(), "/sync", {}, timeout=600.0)
+    )
+    typer.echo(json.dumps(result))
+
+
 @app.command("export-memories")
 def export_memories() -> None:
     # TODO(P6): emit the selected provider's format via the seam in

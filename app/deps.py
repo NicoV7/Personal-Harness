@@ -17,8 +17,10 @@ if TYPE_CHECKING:
     from app.audit import AuditLog
     from app.corpus.reader import CorpusReader
     from app.hooks.state import SessionStore
+    from app.openrouter import ChatClientProvider
     from app.retrieval import Retrieval
     from app.settings import Settings
+    from app.sync.skills import SkillsSync
 
 # (stage_name, payload) -> streamed to the client as a progress notification.
 ProgressFn = Callable[[str, dict], Awaitable[None]]
@@ -44,3 +46,5 @@ class Deps:
     corpus: CorpusReader
     pipeline: Retrieval
     store: SessionStore
+    chat: ChatClientProvider
+    sync: SkillsSync

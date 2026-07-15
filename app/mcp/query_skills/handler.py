@@ -22,8 +22,8 @@ DESCRIPTION = (
     "ALWAYS call query_skills as your first action on any code task. Runs one "
     "hybrid retrieval query over the corpus (rules + skills), streams stage "
     "progress (candidates -> fused -> reranked), and returns ranked artifacts "
-    "plus any forced skills for this context. Mutating tools stay gated until "
-    "this has run this turn; read each returned skill with get_skill."
+    "plus any forced skills for this context. The prompt hook already serves "
+    "and receipts required skills at delivery; read returned skills with get_skill."
 )
 
 
@@ -132,6 +132,8 @@ def _paths_match(globs: list[str] | None, file_paths: list[str] | None) -> bool:
 
 
 def _mark_retrieval_receipt(deps: Deps, meta: CallMeta) -> None:
+    # Advisory for hook gates: the MCP transport session id differs from the
+    # hook session id — the prompt hook's delivery receipt is the one gates see.
     if meta.agent_session_id is None:
         return
     deps.store.set(meta.agent_session_id, "retrieval_receipt", "retrieved", True)

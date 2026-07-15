@@ -50,11 +50,18 @@ class RecordingProgress:
         self.stages.append(stage)
 
 
-def _forbid_llm(monkeypatch):
-    def _boom(settings):
+class _ForbiddenChat:
+    def get(self):
         raise AssertionError("complete frontmatter must never construct the chat client")
 
-    monkeypatch.setattr(handler, "make_chat_client", _boom)
+
+class _StubChat:
+    def get(self):
+        return object()
+
+
+def _forbid_llm(deps):
+    deps.chat = _ForbiddenChat()
 
 
 class TestCompleteFrontmatter:
@@ -62,7 +69,7 @@ class TestCompleteFrontmatter:
         self, deps, meta, pipeline, monkeypatch
     ):
         # arrange
-        _forbid_llm(monkeypatch)
+        _forbid_llm(deps)
         progress = RecordingProgress()
         # act
         out = await handle_md(deps, meta, COMPLETE_SKILL_MD, on_progress=progress)
@@ -84,7 +91,7 @@ class TestCompleteFrontmatter:
 
     async def test_forced_override_lands_in_file(self, deps, meta, monkeypatch):
         # arrange
-        _forbid_llm(monkeypatch)
+        _forbid_llm(deps)
         # act
         await handle_md(deps, meta, COMPLETE_SKILL_MD, forced=True)
         # assert
@@ -92,7 +99,7 @@ class TestCompleteFrontmatter:
 
     async def test_audit_event_written(self, deps, meta, read_audit, monkeypatch):
         # arrange
-        _forbid_llm(monkeypatch)
+        _forbid_llm(deps)
         # act
         await handle_md(deps, meta, COMPLETE_SKILL_MD)
         # assert
@@ -107,7 +114,7 @@ class TestClassification:
         self, deps, meta, rule_body, monkeypatch
     ):
         # arrange
-        monkeypatch.setattr(handler, "make_chat_client", lambda settings: object())
+        deps.chat = _StubChat()
         requested: dict = {}
 
         def fake_classify(frontmatter, body, missing, settings, client):
@@ -146,7 +153,7 @@ class TestFailLoud:
         self, deps, meta, monkeypatch
     ):
         # arrange
-        _forbid_llm(monkeypatch)
+        _forbid_llm(deps)
         markdown = COMPLETE_SKILL_MD.replace("artifact_type: skill", "artifact_type: rule").replace(
             "id: prefer-composition", "id: some-rule"
         )
@@ -160,7 +167,7 @@ class TestFailLoud:
         self, deps, meta, pipeline, monkeypatch
     ):
         # arrange
-        _forbid_llm(monkeypatch)
+        _forbid_llm(deps)
         pipeline.index_error = Errors.index_write_error("redis down")
         # act
         with pytest.raises(IndexWriteError) as excinfo:

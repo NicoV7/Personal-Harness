@@ -1,8 +1,6 @@
 # Build hygiene — keep the build context small and reproducible.
 # Never bake host-only state into the image.
 
-node_modules
-dist
 .git
 .gitignore
 
@@ -11,25 +9,35 @@ dist
 
 # Local BetterAI state (corpus, audit, embeddings) — mounted at runtime.
 .betterai
+.betterai-dev
 
-# Large pre-rendered roadmap (HTML, not consumed by the server).
-docs/IMPLEMENTATION-ROADMAP.html
+# Retired TypeScript tree and legacy JS tooling output — never in the image.
+src
+node_modules
+dist
+*.tsbuildinfo
+
+# Docs, corpus authoring copies, and eval output — not consumed by the server.
+docs
+seed-corpus
+skills
+memories
+eval-output
 
 # Editor/OS noise.
 .DS_Store
 *.log
-*.tsbuildinfo
 .env
 .env.*
 !.env.example
 
-# Tests + fixtures don't ship in the runtime image. The build stage
-# compiles src/ only (tsconfig excludes __tests__), so test fixtures
-# are pure bloat in the build context.
-**/__tests__
-**/*.test.ts
-coverage
-.vitest
+# Tests, fixtures, and Python caches don't ship in the runtime image.
+tests
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.venv
 
 # Worktrees and IDE settings.
 .idea

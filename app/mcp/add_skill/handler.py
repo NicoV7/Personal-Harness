@@ -21,7 +21,6 @@ from app.deps import CallMeta, Deps, ProgressFn
 from app.errors import Errors
 from app.mcp.add_skill.classify import classify_missing
 from app.mcp.add_skill.schema import AddSkillInput
-from app.openrouter import make_chat_client
 
 __all__ = ["NAME", "DESCRIPTION", "handle"]
 
@@ -51,7 +50,7 @@ async def handle(
     await _emit(on_progress, "parsed", {"id": frontmatter.get("id"), "facets": sorted(frontmatter)})
     missing = _missing_facets(frontmatter)
     if missing:
-        client = make_chat_client(deps.settings)
+        client = deps.chat.get()
         frontmatter = {
             **frontmatter,
             **classify_missing(frontmatter, body, missing, deps.settings, client),

@@ -24,7 +24,6 @@ from app.mcp.plan_manifest_gate.gate import mutated_paths, written_content
 from app.mcp.plan_manifest_gate.parser import parse_files_to_touch
 from app.mcp.read_gate import store as read_store
 from app.mcp.retrieval_receipt_gate import store as receipt_store
-from app.openrouter import make_chat_client
 from app.retrieval.expand import Expansion, expand_prompt, expansion_enabled
 from app.settings import CommentPolicy, parse_comment_policy
 
@@ -47,17 +46,19 @@ def hook_routes(deps: Deps) -> list[Route]:
         prompt = _str_field(body, "prompt", "user_prompt", "message", "text")
         cwd = _str_field(body, "cwd") or None
         chain.run(UserPromptSubmit(session_id=session_id, prompt=prompt, cwd=cwd), deps)
+        sync_line = deps.sync.ensure_fresh(deps)
         artifacts, skills, warning = await _retrieve_required(deps, prompt)
         required = [artifact.id for artifact in artifacts]
         served = artifacts if warning is None else []
         if session_id:
-            read_store.set_required(deps.store, session_id, required)
-            if warning is None:
-                receipt_store.mark_retrieved(deps.store, session_id)
-                # Delivery IS the read event: bodies ride this response, so
-                # receipts are marked here — no get_skill round-trips needed.
-                for artifact in served:
-                    read_store.mark_read(deps.store, session_id, artifact.id)
+            # Delivery IS the read event; a failed serve still receipts —
+            # MCP receipts land under another session id, so denying deadlocks.
+            read_store.set_required(
+                deps.store, session_id, required if warning is None else []
+            )
+            receipt_store.mark_retrieved(deps.store, session_id)
+            for artifact in served:
+                read_store.mark_read(deps.store, session_id, artifact.id)
         return JSONResponse(
             {
                 "ok": True,
@@ -70,7 +71,7 @@ def hook_routes(deps: Deps) -> list[Route]:
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
                     "additionalContext": _prompt_context(
-                        served, warning, _comment_policy_line(deps)
+                        served, warning, _comment_policy_line(deps), sync_line
                     ),
                 },
             }
@@ -201,7 +202,9 @@ async def _retrieve_required(
     required_reads_max — the cap bounds both the receipts and the served
     body bytes. A typed infra failure must be VISIBLE (warning carried
     into additionalContext) but must not 500 the hook; on failure the
-    forced set is still REQUIRED (unread), so mutating tools stay denied.
+    caller RELEASES gating for the turn (receipt without requirements) —
+    MCP-side receipts cannot reach the hook session id, so an armed gate
+    with no in-turn remedy is a deadlock, not a guardrail.
     """
     forced_artifacts, forced_warning = _forced_artifacts(deps)
     expansion, expansion_warning = _expand(deps, prompt)
@@ -215,7 +218,8 @@ async def _retrieve_required(
     except BetterAIError as error:
         warning = _join_warnings(
             f"BetterAI retrieval FAILED [{error.code}]: {error}. "
-            "Mutating tools stay gated until query_skills succeeds.",
+            "Required skills were NOT served; gating is released for this "
+            "turn — fix the stack (betterai doctor).",
             forced_warning,
             expansion_warning,
         )
@@ -238,7 +242,7 @@ def _expand(deps: Deps, prompt: str) -> tuple[Expansion, str | None]:
     if not prompt or not expansion_enabled(deps.settings):
         return Expansion(), None
     try:
-        return expand_prompt(prompt, deps.settings, make_chat_client(deps.settings)), None
+        return expand_prompt(prompt, deps.settings, deps.chat.get()), None
     except BetterAIError as error:
         return Expansion(), (
             f"BetterAI prompt expansion FAILED [{error.code}]: {error}. "
@@ -338,7 +342,10 @@ def _instruction(served: list) -> str:
 
 
 def _prompt_context(
-    served: list, warning: str | None, comment_line: str | None = None
+    served: list,
+    warning: str | None,
+    comment_line: str | None = None,
+    sync_line: str | None = None,
 ) -> str:
     lines = [warning] if warning else []
     if not served:
@@ -346,8 +353,8 @@ def _prompt_context(
             "BetterAI retrieved context for this prompt. No harness skills "
             "matched, so continue normally."
             if warning is None
-            else "Required skills could NOT be served this turn; mutating "
-            "tools stay denied until the stack is fixed (betterai doctor)."
+            else "Required skills could NOT be served this turn; gating was "
+            "released for this turn — fix the stack (betterai doctor)."
         )
     else:
         lines.append(
@@ -357,6 +364,8 @@ def _prompt_context(
         lines += [_served_section(artifact) for artifact in served]
     if comment_line:
         lines.append(comment_line)
+    if sync_line:
+        lines.append(sync_line)
     return "\n".join(lines)
 
 

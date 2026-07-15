@@ -86,7 +86,10 @@ def install_env_values(home: str, overrides: dict | None = None) -> dict[str, st
         "BETTERAI_DOCKER_SOCK": DOCKER_SOCK,
         "BETTERAI_COMMENT_VERBOSITY": "default",
         "BETTERAI_READ_GATE": "on",
+        "BETTERAI_RECEIPT_GATE": "on",
         "BETTERAI_REQUIRED_READS_MAX": "5",
+        "BETTERAI_SKILLS_REPO_URL": "https://github.com/nicov7/betterai-skills",
+        "BETTERAI_SKILLS_SYNC_TTL": "3600",
     }
     values.update(overrides or {})
     if not values.get("BETTERAI_PROMPT_IMPROVER_MODEL"):

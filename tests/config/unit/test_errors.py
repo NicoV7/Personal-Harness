@@ -42,9 +42,10 @@ class TestFactories:
         assert "  - KEY_A" in str(error)
         assert "  - KEY_B" in str(error)
 
-    def test_receipt_missing_names_query_skills(self):
+    def test_receipt_missing_names_remedy_and_override(self):
         # arrange / act
         error = Errors.receipt_missing("Edit")
         # assert
         assert error.code == "BAI-701"
-        assert "query_skills" in str(error)
+        assert "no retrieval receipt" in str(error)
+        assert "BETTERAI_RECEIPT_GATE=off" in str(error)

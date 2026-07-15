@@ -43,7 +43,10 @@ def build_settings(**overrides) -> Settings:
         docker_sock="/var/run/docker.sock",
         comment_verbosity=CommentPolicy("default"),
         read_gate="on",
+        receipt_gate="on",
         required_reads_max=5,
+        skills_repo_url="off",
+        skills_sync_ttl=3600,
     )
     values.update(overrides)
     return Settings(**values)

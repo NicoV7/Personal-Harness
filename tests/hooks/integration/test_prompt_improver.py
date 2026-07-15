@@ -6,6 +6,8 @@ route wiring are real. Test plan_glob is "*.plan.md" (gate_helpers).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -46,10 +48,10 @@ class TestPromptImprover:
     def test_expanded_aspects_reach_the_retrieval_query(self, tmp_path, monkeypatch):
         # arrange
         pipeline = FakePipeline(results=[FakeScored(make_skill("no-retries"))])
-        client, _ = _client_and_deps(
+        client, deps = _client_and_deps(
             tmp_path, pipeline=pipeline, improver_model="test/improver"
         )
-        monkeypatch.setattr(routes_module, "make_chat_client", lambda settings: object())
+        deps.chat = SimpleNamespace(get=lambda: object())
         monkeypatch.setattr(
             routes_module,
             "expand_prompt",

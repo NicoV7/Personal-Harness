@@ -100,6 +100,11 @@ class ExpansionError(BetterAIError):
     http_status = 502
 
 
+class SkillsSyncError(BetterAIError):
+    code = "BAI-610"
+    http_status = 502
+
+
 class ReadGateError(BetterAIError):
     code = "BAI-700"
     http_status = 403
@@ -192,6 +197,10 @@ class Errors:
         return ExpansionError(f"prompt expansion failed: {detail}")
 
     @staticmethod
+    def skills_sync_failed(url: str, detail: str) -> SkillsSyncError:
+        return SkillsSyncError(f"skills sync failed for {url}: {detail}")
+
+    @staticmethod
     def read_gate_denied(skill_ids: Sequence[str]) -> ReadGateError:
         listing = ", ".join(skill_ids)
         return ReadGateError(
@@ -204,8 +213,11 @@ class Errors:
     @staticmethod
     def receipt_missing(tool_name: str) -> RetrievalReceiptMissingError:
         return RetrievalReceiptMissingError(
-            f"{tool_name} denied: call query_skills first this turn "
-            "(retrieval receipt required before mutating tools)"
+            f"{tool_name} denied: no retrieval receipt for this turn. The prompt "
+            "hook records it at delivery; this deny means that failed — check "
+            "the harness warning in the prompt context, fix the stack (betterai "
+            "doctor), or send a new message to start a fresh turn. "
+            "BETTERAI_RECEIPT_GATE=off is the explicit override."
         )
 
     @staticmethod

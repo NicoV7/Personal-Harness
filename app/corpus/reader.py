@@ -38,15 +38,40 @@ class CorpusReader:
         self.global_root = global_root
         self.repo_root = repo_root
         self._overridden: list[str] | None = None
+        self._parsed: dict[str, tuple[int, int, Artifact]] = {}
 
     def read(self) -> list[Artifact]:
-        """Fresh walk on every call: the filesystem is the system of
-        record and caching here would create a second source of truth."""
-        global_artifacts = _read_root(self.global_root, "global")
-        repo_artifacts = _read_root(self.repo_root, "repo") if self.repo_root else []
+        """Fresh walk on every call: the filesystem stays the system of
+        record — a parse is reused only while its file's stat (mtime_ns,
+        size) is unchanged, so edits and deletions appear next read."""
+        walked: set[str] = set()
+        global_artifacts = self._read_root(self.global_root, "global", walked)
+        repo_artifacts = (
+            self._read_root(self.repo_root, "repo", walked) if self.repo_root else []
+        )
+        for stale in set(self._parsed) - walked:
+            del self._parsed[stale]
         merged, overridden = _merge_repo_over_global(global_artifacts, repo_artifacts)
         self._overridden = overridden
         return merged
+
+    def _read_root(self, root: str, scope: Scope, walked: set[str]) -> list[Artifact]:
+        artifacts: list[Artifact] = []
+        for dir_name, artifact_type_name in _ARTIFACT_TYPE_DIRS:
+            for path in _walk_markdown(Path(root) / dir_name):
+                walked.add(str(path))
+                artifacts.append(self._load_cached(path, artifact_type_name, scope))
+        return artifacts
+
+    def _load_cached(self, path: Path, artifact_type_name: str, scope: Scope) -> Artifact:
+        # Only successful parses are cached: BAI-410 must re-raise per read.
+        stat = path.stat()
+        cached = self._parsed.get(str(path))
+        if cached is not None and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            return cached[2]
+        artifact = _load_artifact(path, artifact_type_name, scope)
+        self._parsed[str(path)] = (stat.st_mtime_ns, stat.st_size, artifact)
+        return artifact
 
     def find(self, artifact_id: str) -> Artifact | None:
         for artifact in self.read():
@@ -70,14 +95,6 @@ class CorpusReader:
         for root, scope in roots:
             memories.extend(_memories_under(Path(root) / "memories", scope))
         return memories
-
-
-def _read_root(root: str, scope: Scope) -> list[Artifact]:
-    artifacts: list[Artifact] = []
-    for dir_name, artifact_type_name in _ARTIFACT_TYPE_DIRS:
-        for path in _walk_markdown(Path(root) / dir_name):
-            artifacts.append(_load_artifact(path, artifact_type_name, scope))
-    return artifacts
 
 
 def _walk_markdown(directory: Path) -> list[Path]:

@@ -30,7 +30,10 @@ FULL_ENV = {
     "BETTERAI_DOCKER_SOCK": "/var/run/docker.sock",
     "BETTERAI_COMMENT_VERBOSITY": "default",
     "BETTERAI_READ_GATE": "on",
+    "BETTERAI_RECEIPT_GATE": "on",
     "BETTERAI_REQUIRED_READS_MAX": "5",
+    "BETTERAI_SKILLS_REPO_URL": "https://github.test/nicov7/betterai-skills",
+    "BETTERAI_SKILLS_SYNC_TTL": "3600",
 }
 
 
@@ -94,6 +97,25 @@ class TestFromEnv:
         # act / assert
         with pytest.raises(ConfigInvalidError):
             Settings.from_env(env)
+
+    def test_skills_repo_url_rejects_non_https(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_SKILLS_REPO_URL"] = "git@github.test:owner/repo.git"
+        # act
+        with pytest.raises(ConfigInvalidError) as excinfo:
+            Settings.from_env(env)
+        # assert
+        assert "BETTERAI_SKILLS_REPO_URL" in str(excinfo.value)
+
+    def test_skills_repo_url_off_disables_sync(self):
+        # arrange
+        env = dict(FULL_ENV)
+        env["BETTERAI_SKILLS_REPO_URL"] = "off"
+        # act
+        settings = Settings.from_env(env)
+        # assert
+        assert settings.skills_repo_url == "off"
 
     def test_allowed_hosts_parses_comma_list(self):
         # arrange

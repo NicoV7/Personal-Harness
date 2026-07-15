@@ -18,6 +18,7 @@ HYBRID_FUSIONS = ("linear", "rrf")
 MEMORY_PROVIDERS = ("basic-memory", "cognee", "none")
 COMMENT_MODES = ("default", "none", "tokens", "lines")
 READ_GATE_MODES = ("on", "off")
+RECEIPT_GATE_MODES = ("on", "off")
 
 REQUIRED_KEYS = (
     "BETTERAI_CORPUS_ROOT",
@@ -44,7 +45,10 @@ REQUIRED_KEYS = (
     "BETTERAI_DOCKER_SOCK",
     "BETTERAI_COMMENT_VERBOSITY",
     "BETTERAI_READ_GATE",
+    "BETTERAI_RECEIPT_GATE",
     "BETTERAI_REQUIRED_READS_MAX",
+    "BETTERAI_SKILLS_REPO_URL",
+    "BETTERAI_SKILLS_SYNC_TTL",
 )
 
 # Present-but-unset is allowed only for keys whose absence is a meaningful
@@ -110,7 +114,10 @@ class Settings:
     docker_sock: str
     comment_verbosity: CommentPolicy
     read_gate: str  # "off" is the explicit escape hatch: delivery/receipts/audit still run
+    receipt_gate: str  # mirrors read_gate: "off" disables only the deny
     required_reads_max: int
+    skills_repo_url: str  # "off" disables the GitHub skills sync explicitly
+    skills_sync_ttl: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -143,7 +150,10 @@ class Settings:
             docker_sock=env["BETTERAI_DOCKER_SOCK"],
             comment_verbosity=_comment_policy(env, "BETTERAI_COMMENT_VERBOSITY"),
             read_gate=_choice(env, "BETTERAI_READ_GATE", READ_GATE_MODES),
+            receipt_gate=_choice(env, "BETTERAI_RECEIPT_GATE", RECEIPT_GATE_MODES),
             required_reads_max=_positive_int(env, "BETTERAI_REQUIRED_READS_MAX"),
+            skills_repo_url=_https_or_off(env, "BETTERAI_SKILLS_REPO_URL"),
+            skills_sync_ttl=_positive_int(env, "BETTERAI_SKILLS_SYNC_TTL"),
         )
 
 
@@ -189,6 +199,13 @@ def _comment_policy(env: Mapping[str, str], key: str) -> CommentPolicy:
         return parse_comment_policy(env[key])
     except ValueError as exc:
         raise Errors.config_invalid(key, str(exc)) from exc
+
+
+def _https_or_off(env: Mapping[str, str], key: str) -> str:
+    raw = env[key]
+    if raw != "off" and not raw.startswith("https://"):
+        raise Errors.config_invalid(key, f"expected 'off' or an https:// URL, got {raw!r}")
+    return raw
 
 
 def _hosts(raw: str | None) -> tuple[str, ...] | None:

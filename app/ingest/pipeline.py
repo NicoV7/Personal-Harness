@@ -63,7 +63,7 @@ async def run_ingest(
 
 
 def _default_distiller(deps: Deps) -> Distiller:
-    client = make_chat_client(deps.settings)
+    client = deps.chat.get()
     return lambda chunk: distill_chunk(chunk, deps.settings, client)
 
 
