@@ -1,10 +1,14 @@
 """Claude Code hook HTTP endpoints (thin: parse -> chain -> respond).
 
-JSON field names mirror src/hooks/routes.ts exactly — the installed hook
-scripts and the TS test suite are the wire contract. Endpoints always
-answer 200: a hook that 500s would silently disable gating client-side,
-so infra failures surface as additionalContext text instead (fail LOUD
-in the agent's face, never a hidden fallback).
+The wire contract is Claude Code's hook-output JSON schema
+(code.claude.com/docs/en/hooks): the installed shims print these bodies
+verbatim as hook stdout, and the client STRICTLY validates JSON hook
+output — any non-schema top-level key fails the whole output, so
+responses carry ONLY schema fields (rich diagnostics live in the audit
+log instead). Endpoints always answer 200: a hook that 500s would
+silently disable gating client-side, so infra failures surface as
+additionalContext text (fail LOUD in the agent's face, never a hidden
+fallback).
 """
 
 from __future__ import annotations
@@ -58,7 +62,7 @@ def hook_routes(deps: Deps) -> list[Route]:
         # cache (zero embedding calls) and fall back to fresh retrieval
         # when no plan is active or the cache entry is gone.
         cached = _plan_cache_serve(deps, session_id)
-        artifacts, skills, warning = (
+        artifacts, warning = (
             cached if cached is not None else await _retrieve_required(deps, prompt)
         )
         required = [artifact.id for artifact in artifacts]
@@ -91,21 +95,10 @@ def hook_routes(deps: Deps) -> list[Route]:
                 ),
             )
         return JSONResponse(
-            {
-                "ok": True,
-                "block": False,
-                "session_id": session_id,
-                "required_skill_ids": required,
-                "missing_skill_ids": read_store.missing(deps.store, session_id),
-                "skills": skills,
-                "instruction": _instruction(served),
-                "hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit",
-                    "additionalContext": _prompt_context(
-                        served, warning, _comment_policy_line(deps), sync_line
-                    ),
-                },
-            }
+            _hook_output(
+                "UserPromptSubmit",
+                _prompt_context(served, warning, _comment_policy_line(deps), sync_line),
+            )
         )
 
     async def pre_tool_use(request: Request) -> JSONResponse:
@@ -118,8 +111,7 @@ def hook_routes(deps: Deps) -> list[Route]:
             tool_input=_dict_field(body, "tool_input", "toolInput"),
         )
         decision = chain.run(event, deps)
-        missing = read_store.missing(deps.store, session_id)
-        return JSONResponse(_pre_tool_payload(decision, session_id, tool_name, missing))
+        return JSONResponse(_pre_tool_payload(decision))
 
     async def post_tool_use(request: Request) -> JSONResponse:
         body = await _read_body(request)
@@ -135,33 +127,24 @@ def hook_routes(deps: Deps) -> list[Route]:
         decision = chain.run(event, deps)
         plan_context = await _surface_plan_skills(deps, event)
         return JSONResponse(
-            {
-                "ok": True,
-                "session_id": session_id,
-                "tool_name": tool_name,
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUse",
-                    "additionalContext": _join_warnings(
-                        decision.additional_context, plan_context
-                    ),
-                },
-            }
+            _hook_output(
+                "PostToolUse",
+                _join_warnings(decision.additional_context, plan_context),
+            )
         )
 
     async def stop(request: Request) -> JSONResponse:
         body = await _read_body(request)
         session_id = _session_id(body)
         decision = chain.run(Stop(session_id=session_id), deps)
-        missing = read_store.missing(deps.store, session_id)
-        return JSONResponse(_stop_payload(decision, session_id, missing))
+        return JSONResponse(_stop_payload(decision))
 
     async def session_end(request: Request) -> JSONResponse:
+        # SessionEnd output is never processed by the client — the call
+        # exists purely to clear server-side session state.
         body = await _read_body(request)
-        session_id = _session_id(body)
-        chain.run(SessionEnd(session_id=session_id), deps)
-        return JSONResponse(
-            {"ok": True, "session_id": session_id, "cleared": bool(session_id)}
-        )
+        chain.run(SessionEnd(session_id=_session_id(body)), deps)
+        return JSONResponse({})
 
     return [
         Route("/hooks/user-prompt-submit", user_prompt_submit, methods=["POST"]),
@@ -172,64 +155,40 @@ def hook_routes(deps: Deps) -> list[Route]:
     ]
 
 
-def _pre_tool_payload(
-    decision: HookDecision, session_id: str | None, tool_name: str, missing: list[str]
-) -> dict:
-    base = {"session_id": session_id, "tool_name": tool_name, "missing_skill_ids": missing}
+def _hook_output(event_name: str, additional_context: str | None = None, **fields) -> dict:
+    """Schema-valid hook JSON: additionalContext is omitted when empty —
+    the client rejects null and unknown keys fail the whole output."""
+    output: dict = {"hookEventName": event_name, **fields}
+    if additional_context:
+        output["additionalContext"] = additional_context
+    return {"hookSpecificOutput": output}
+
+
+def _pre_tool_payload(decision: HookDecision) -> dict:
     if not decision.deny:
-        hook_output = {"hookEventName": "PreToolUse", "permissionDecision": "allow"}
-        if decision.additional_context:
-            hook_output["additionalContext"] = decision.additional_context
-        return {
-            "ok": True,
-            "block": False,
-            "permissionDecision": "allow",
-            "hookSpecificOutput": hook_output,
-            **base,
-        }
-    return {
-        "ok": False,
-        "block": True,
-        "permissionDecision": "deny",
-        "permissionDecisionReason": decision.reason,
-        "reason": decision.reason,
-        "error_code": decision.error_code,
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": decision.reason,
-        },
-        **base,
-    }
+        return _hook_output(
+            "PreToolUse", decision.additional_context, permissionDecision="allow"
+        )
+    reason = decision.reason or ""
+    if decision.error_code:
+        # The BAI code rides the reason text — error_code is not a schema field.
+        reason = f"[{decision.error_code}] {reason}"
+    return _hook_output(
+        "PreToolUse", None, permissionDecision="deny", permissionDecisionReason=reason
+    )
 
 
-def _stop_payload(
-    decision: HookDecision, session_id: str | None, missing: list[str]
-) -> dict:
-    base = {"session_id": session_id, "missing_skill_ids": missing}
+def _stop_payload(decision: HookDecision) -> dict:
     if decision.deny:
-        hook_output = {"hookEventName": "Stop", "additionalContext": decision.reason}
-        return {
-            "ok": False,
-            "block": True,
-            "decision": "block",
-            "reason": decision.reason,
-            "hookSpecificOutput": hook_output,
-            **base,
-        }
-    # No context on the allow path: any Stop additionalContext makes the
-    # client re-invoke the agent, looping every turn-end forever.
-    return {
-        "ok": True,
-        "block": False,
-        "hookSpecificOutput": {"hookEventName": "Stop"},
-        **base,
-    }
+        return {"decision": "block", "reason": decision.reason or ""}
+    # Nothing on the allow path: any Stop output that re-invokes the
+    # agent loops every turn-end forever.
+    return {}
 
 
 def _plan_cache_serve(
     deps: Deps, session_id: str | None
-) -> tuple[list, list[dict], str | None] | None:
+) -> tuple[list, str | None] | None:
     """Plan-scoped serve: once a plan is captured for this session, prompt
     turns are served from the plan cache with ZERO embedding calls. None
     falls back to fresh retrieval — no plan active, entry evicted/lost on
@@ -247,19 +206,11 @@ def _plan_cache_serve(
     forced, forced_warning = _forced_artifacts(deps)
     ranked = sorted(entry.matches.values(), key=lambda match: match.score, reverse=True)
     artifacts = [match.artifact for match in ranked]
-    required = _cap_required(forced, artifacts, deps.settings.required_reads_max)
-    summaries = [
-        _skill_summary(a)
-        for a in artifacts
-        if getattr(a, "artifact_type", "skill") == "skill"
-    ]
-    return required, summaries, forced_warning
+    return _cap_required(forced, artifacts, deps.settings.required_reads_max), forced_warning
 
 
-async def _retrieve_required(
-    deps: Deps, prompt: str
-) -> tuple[list, list[dict], str | None]:
-    """Server-side retrieval: (capped required artifacts, summaries, warning).
+async def _retrieve_required(deps: Deps, prompt: str) -> tuple[list, str | None]:
+    """Server-side retrieval: (capped required artifacts, warning).
 
     Forced artifacts lead, scored ones follow, truncated to
     required_reads_max — the cap bounds both the receipts and the served
@@ -286,11 +237,10 @@ async def _retrieve_required(
             forced_warning,
             expansion_warning,
         )
-        return _cap_required(forced_artifacts, [], deps.settings.required_reads_max), [], warning
+        return _cap_required(forced_artifacts, [], deps.settings.required_reads_max), warning
     scored = [getattr(result, "artifact", result) for result in results]
     required = _cap_required(forced_artifacts, scored, deps.settings.required_reads_max)
-    summaries = [_skill_summary(a) for a in scored if getattr(a, "artifact_type", "skill") == "skill"]
-    return required, summaries, _join_warnings(forced_warning, expansion_warning)
+    return required, _join_warnings(forced_warning, expansion_warning)
 
 
 def _cap_required(forced: list, scored: list, limit: int) -> list:
@@ -466,25 +416,6 @@ def _forced_artifacts(deps: Deps) -> tuple[list, str | None]:
 def _join_warnings(*warnings: str | None) -> str | None:
     present = [w for w in warnings if w]
     return "\n".join(present) if present else None
-
-
-def _skill_summary(skill: Any) -> dict:
-    return {
-        "id": skill.id,
-        "title": getattr(skill, "title", skill.id),
-        "scope": getattr(skill, "scope", "global"),
-        "category": getattr(skill, "category", ""),
-        "when_to_use": getattr(skill, "when_to_use", None) or "",
-    }
-
-
-def _instruction(served: list) -> str:
-    if not served:
-        return "No required skills matched this prompt."
-    return (
-        "The required skills are served inline in additionalContext and "
-        "already receipted — apply them; call get_skill only for deeper reads."
-    )
 
 
 def _prompt_context(
