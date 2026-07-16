@@ -22,6 +22,7 @@ from app.corpus.reader import CorpusReader
 from app.corpus.schema import Artifact
 from app.deps import CallMeta, Deps
 from app.errors import BetterAIError
+from app.hooks.plan_cache import PlanSkillCache
 from app.hooks.state import InMemorySessionStore
 from app.openrouter import ChatClientProvider
 from app.settings import Settings
@@ -176,11 +177,12 @@ def settings(full_env: dict[str, str]) -> Settings:
 @dataclass
 class FakeScored:
     """Duck-typed stand-in for the retrieval agent's ScoredArtifact: the
-    tool layer touches only .artifact, .score, and .reason."""
+    tool layer touches only .artifact, .score, .reason, and .provenance."""
 
     artifact: Artifact
     score: float
     reason: str = "scored"
+    provenance: str | None = None
 
 
 class FakePipeline:
@@ -264,6 +266,7 @@ def deps(
         store=store,
         chat=ChatClientProvider(settings),
         sync=SkillsSync(),
+        plan_skills=PlanSkillCache(),
     )
 
 

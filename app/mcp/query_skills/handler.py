@@ -76,6 +76,8 @@ def _row(item: Any) -> dict:
         "score": float(item.score),
         "reason": getattr(item, "reason", "scored"),
     }
+    if getattr(item, "provenance", None):
+        row["provenance"] = item.provenance
     if artifact.when_to_use:
         row["when_to_use"] = artifact.when_to_use
     return row

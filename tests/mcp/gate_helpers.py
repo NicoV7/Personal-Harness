@@ -15,6 +15,7 @@ from pathlib import Path
 from app.audit import AuditLog
 from app.corpus.schema import Artifact
 from app.deps import Deps
+from app.hooks.plan_cache import PlanSkillCache
 from app.hooks.state import InMemorySessionStore
 from app.openrouter import ChatClientProvider
 from app.settings import CommentPolicy, Settings
@@ -74,6 +75,7 @@ class FakeScored:
 
     artifact: Artifact
     score: float = 1.0
+    provenance: str | None = None
 
 
 class FakeCorpus:
@@ -137,6 +139,7 @@ def make_deps(
     corpus: FakeCorpus | None = None,
     chat: ChatClientProvider | None = None,
     sync: SkillsSync | None = None,
+    plan_skills: PlanSkillCache | None = None,
 ) -> Deps:
     resolved = settings or make_settings(tmp_path)
     return Deps(
@@ -147,6 +150,7 @@ def make_deps(
         store=InMemorySessionStore(),
         chat=chat or ChatClientProvider(resolved),
         sync=sync or SkillsSync(),
+        plan_skills=plan_skills or PlanSkillCache(),
     )
 
 

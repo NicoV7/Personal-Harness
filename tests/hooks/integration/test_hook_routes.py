@@ -48,7 +48,7 @@ def _matching_pipeline():
 
 def test_prompt_serves_required_skill_bodies_and_marks_receipts(tmp_path):
     # arrange
-    client, _ = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
 
     # act
     response = client.post(
@@ -59,12 +59,11 @@ def test_prompt_serves_required_skill_bodies_and_marks_receipts(tmp_path):
     # assert: bodies ride the response and receipts are marked at delivery
     assert response.status_code == 200
     body = response.json()
-    assert body["required_skill_ids"] == ["rename-safely"]
-    assert body["missing_skill_ids"] == []
-    assert body["skills"][0]["id"] == "rename-safely"
+    assert set(body) == {"hookSpecificOutput"}
     context = body["hookSpecificOutput"]["additionalContext"]
     assert "## BetterAI required skill: rename-safely" in context
     assert body["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert read_store.missing(deps.store, SESSION) == []
 
 
 def test_pre_tool_use_denies_mutations_only_while_unread(tmp_path):
@@ -89,14 +88,11 @@ def test_pre_tool_use_denies_mutations_only_while_unread(tmp_path):
     ).json()
 
     # assert
-    assert blocked["block"] is True
-    assert blocked["permissionDecision"] == "deny"
-    assert blocked["missing_skill_ids"] == ["rename-safely"]
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "rename-safely" in blocked["hookSpecificOutput"]["permissionDecisionReason"]
-    assert read_only["block"] is False
-    assert loader["block"] is False
-    assert allowed["block"] is False
-    assert allowed["missing_skill_ids"] == []
+    assert read_only["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert loader["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_stop_blocks_exactly_once_then_passes(tmp_path):
@@ -109,10 +105,9 @@ def test_stop_blocks_exactly_once_then_passes(tmp_path):
     second = client.post("/hooks/stop", json={"session_id": SESSION}).json()
 
     # assert
-    assert first["block"] is True
     assert first["decision"] == "block"
     assert "rename-safely" in first["reason"]
-    assert second["block"] is False
+    assert second == {}
 
 
 def test_non_matching_prompt_resets_required_and_unblocks(tmp_path):
@@ -135,9 +130,8 @@ def test_non_matching_prompt_resets_required_and_unblocks(tmp_path):
     ).json()
 
     # assert
-    assert no_match["required_skill_ids"] == []
     assert "continue normally" in no_match["hookSpecificOutput"]["additionalContext"]
-    assert allowed["block"] is False
+    assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_retrieval_failure_releases_gating_with_visible_bai601_context(tmp_path):
@@ -167,8 +161,7 @@ def test_retrieval_failure_releases_gating_with_visible_bai601_context(tmp_path)
     assert "BAI-601" in context
     assert "betterai start" in context
     assert "released" in context
-    assert body["missing_skill_ids"] == []
-    assert write_after_failure["block"] is False
+    assert write_after_failure["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_never_served_session_edit_allowed_with_wiring_warning(tmp_path):
@@ -181,7 +174,7 @@ def test_never_served_session_edit_allowed_with_wiring_warning(tmp_path):
     ).json()
 
     # assert
-    assert body["block"] is False
+    assert body["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert "hook wiring" in body["hookSpecificOutput"]["additionalContext"]
     assert any(e["event_type"] == "gate_bypass_no_evidence" for e in audit_events(deps))
 
@@ -250,7 +243,7 @@ def test_sync_failure_only_warns_and_never_blocks(tmp_path):
     # assert
     context = prompt["hookSpecificOutput"]["additionalContext"]
     assert "skills sync FAILED [BAI-610]" in context
-    assert write["block"] is False
+    assert write["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_forced_skills_are_injected_regardless_of_retrieval_score(tmp_path):
@@ -266,8 +259,9 @@ def test_forced_skills_are_injected_regardless_of_retrieval_score(tmp_path):
         json={"session_id": SESSION, "prompt": "add a feature"},
     ).json()
 
-    # assert
-    assert body["required_skill_ids"] == ["write-scoped-plan"]
+    # assert: the forced body is served inline despite zero scored results
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "## BetterAI required skill: write-scoped-plan" in context
 
 
 def test_edit_incrementally_forced_skill_skipped_when_granularity_none(tmp_path):
@@ -285,7 +279,9 @@ def test_edit_incrementally_forced_skill_skipped_when_granularity_none(tmp_path)
     ).json()
 
     # assert
-    assert body["required_skill_ids"] == []
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "edit-incrementally" not in context
+    assert "continue normally" in context
 
 
 def test_receipt_from_prompt_retrieval_allows_mutating_tools(tmp_path):
@@ -307,7 +303,7 @@ def test_receipt_from_prompt_retrieval_allows_mutating_tools(tmp_path):
     ).json()
 
     # assert
-    assert decision["block"] is False
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_post_tool_use_carries_plan_manifest_warning_context(tmp_path):
@@ -333,7 +329,6 @@ def test_post_tool_use_carries_plan_manifest_warning_context(tmp_path):
     ).json()
 
     # assert
-    assert body["ok"] is True
     assert "captured" in body["hookSpecificOutput"]["additionalContext"]
 
 
@@ -348,9 +343,337 @@ def test_session_end_reports_cleared_and_resets_state(tmp_path):
     # act
     body = client.post("/hooks/session-end", json={"session_id": SESSION}).json()
 
-    # assert
-    assert body == {"ok": True, "session_id": SESSION, "cleared": True}
+    # assert: SessionEnd output is ignored by the client — empty body,
+    # but the server-side session state is gone
+    assert body == {}
     assert read_store.missing(deps.store, SESSION) == []
+
+
+PLAN_PATH = "/repo/feature.plan.md"
+PLAN_BODY = (
+    "# Feature plan\n\n"
+    "## Approach\nadd retry handling to the http client\n\n"
+    "## Files to touch\n- app/a.py — run\n\n"
+    "## Testing\nwrite pytest fixtures\n"
+)
+
+
+def _post_plan(client, content=PLAN_BODY, session=SESSION, path=PLAN_PATH, tool="Write"):
+    return client.post(
+        "/hooks/post-tool-use",
+        json={
+            "session_id": session,
+            "tool_name": tool,
+            "tool_input": {"file_path": path, "content": content},
+            "tool_response": {},
+        },
+    ).json()
+
+
+def test_plan_write_runs_full_text_retrieval_and_serves_new_skills(tmp_path):
+    # arrange
+    pipeline = _matching_pipeline()
+    client, deps = _client_and_deps(tmp_path, pipeline=pipeline)
+
+    # act
+    body = _post_plan(client)
+
+    # assert: section-derived aspects (capped per batch), inline serve, audit
+    query = pipeline.queries[-1]
+    assert any(aspect.startswith("Approach:") for aspect in query["aspects"])
+    assert len(query["aspects"]) <= 8
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "## BetterAI required skill: rename-safely" in context
+    assert "get_plan_skills" in context
+    serve = [e for e in audit_events(deps) if e["event_type"] == "plan_serve"][-1]
+    assert serve["payload"]["served"] == ["rename-safely"]
+    assert serve["payload"]["cache_hit"] is False
+    assert "rename-safely" in serve["payload"]["provenance"]
+
+
+def test_identical_rewrite_and_skill_audit_writeback_are_idempotent(tmp_path):
+    # arrange
+    pipeline = _matching_pipeline()
+    client, _ = _client_and_deps(tmp_path, pipeline=pipeline)
+    _post_plan(client)
+    queries_after_first = len(pipeline.queries)
+
+    # act: identical rewrite, then a rewrite adding only the audit section
+    second = _post_plan(client)
+    third = _post_plan(
+        client,
+        content=PLAN_BODY + "\n## Skill Audit\n\n| Skill | Why matched |\n|---|---|\n",
+    )
+
+    # assert: zero retrieval, zero re-serve — the write-back never loops
+    assert len(pipeline.queries) == queries_after_first
+    for body in (second, third):
+        context = body["hookSpecificOutput"].get("additionalContext")
+        assert not (context and "required skill" in context)
+
+
+def test_changed_plan_serves_only_skills_new_to_the_plan(tmp_path):
+    # arrange
+    pipeline = _matching_pipeline()
+    client, _ = _client_and_deps(tmp_path, pipeline=pipeline)
+    _post_plan(client)
+
+    # act: retrieval now also matches a second skill; the plan grew a section
+    pipeline._results = [
+        FakeScored(make_skill("rename-safely")),
+        FakeScored(make_skill("write-pytest-fixture")),
+    ]
+    body = _post_plan(client, content=PLAN_BODY + "\n## Rollout\ncanary the deploy\n")
+
+    # assert
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "## BetterAI required skill: write-pytest-fixture" in context
+    assert "## BetterAI required skill: rename-safely" not in context
+
+
+def test_prompt_after_plan_write_serves_from_cache_without_retrieval(tmp_path):
+    # arrange
+    pipeline = _matching_pipeline()
+    client, deps = _client_and_deps(tmp_path, pipeline=pipeline)
+    client.post(
+        "/hooks/user-prompt-submit", json={"session_id": SESSION, "prompt": "plan it"}
+    )
+    _post_plan(client)
+    queries_before = len(pipeline.queries)
+
+    # act
+    prompt = client.post(
+        "/hooks/user-prompt-submit",
+        json={"session_id": SESSION, "prompt": "implement step 1"},
+    ).json()
+    write = client.post(
+        "/hooks/pre-tool-use",
+        json={
+            "session_id": SESSION,
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/repo/app/a.py"},
+        },
+    ).json()
+
+    # assert: zero embedding-path queries, receipts satisfied, plan_path audited
+    assert len(pipeline.queries) == queries_before
+    assert (
+        "## BetterAI required skill: rename-safely"
+        in prompt["hookSpecificOutput"]["additionalContext"]
+    )
+    assert write["hookSpecificOutput"]["permissionDecision"] == "allow"
+    serve = [e for e in audit_events(deps) if e["event_type"] == "prompt_serve"][-1]
+    assert serve["payload"]["required"] == ["rename-safely"]
+    assert serve["payload"]["plan_path"].endswith("feature.plan.md")
+
+
+def test_evicted_plan_cache_falls_back_to_fresh_retrieval(tmp_path):
+    # arrange: a 1-slot cache so the second plan evicts the first
+    from app.hooks.plan_cache import PlanSkillCache
+
+    pipeline = _matching_pipeline()
+    deps = make_deps(
+        tmp_path,
+        settings=make_settings(tmp_path),
+        pipeline=pipeline,
+        plan_skills=PlanSkillCache(max_plans=1),
+    )
+    client = TestClient(Starlette(routes=hook_routes(deps)))
+    _post_plan(client)
+    _post_plan(client, session="sess-other", path="/repo/other.plan.md")
+    queries_before = len(pipeline.queries)
+
+    # act: the mapped entry is gone — never an error, always fresh retrieval
+    prompt = client.post(
+        "/hooks/user-prompt-submit", json={"session_id": SESSION, "prompt": "go"}
+    ).json()
+
+    # assert
+    assert len(pipeline.queries) == queries_before + 1
+    assert (
+        "## BetterAI required skill: rename-safely"
+        in prompt["hookSpecificOutput"]["additionalContext"]
+    )
+
+
+def test_edit_fragment_without_plan_content_keeps_manifest_and_cache(tmp_path):
+    # arrange: armed manifest + filled cache from a full Write
+    pipeline = _matching_pipeline()
+    client, _ = _client_and_deps(tmp_path, pipeline=pipeline)
+    client.post(
+        "/hooks/user-prompt-submit", json={"session_id": SESSION, "prompt": "plan it"}
+    )
+    _post_plan(client)
+    queries_before = len(pipeline.queries)
+
+    # act: old-shim Edit carrying only a fragment
+    body = client.post(
+        "/hooks/post-tool-use",
+        json={
+            "session_id": SESSION,
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": PLAN_PATH,
+                "old_string": "retry",
+                "new_string": "backoff",
+            },
+            "tool_response": {},
+        },
+    ).json()
+    outside = client.post(
+        "/hooks/pre-tool-use",
+        json={
+            "session_id": SESSION,
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/unlisted.py"},
+        },
+    ).json()
+
+    # assert: no INACTIVE clobber, no cache poisoning, gate still armed
+    context = body["hookSpecificOutput"].get("additionalContext")
+    assert not (context and "INACTIVE" in context)
+    assert len(pipeline.queries) == queries_before
+    assert outside["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "BAI-702" in outside["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_edit_with_shim_plan_content_uses_the_full_text_path(tmp_path):
+    # arrange
+    pipeline = _matching_pipeline()
+    client, _ = _client_and_deps(tmp_path, pipeline=pipeline)
+
+    # act: Edit whose payload carries the shim-attached full plan text
+    body = client.post(
+        "/hooks/post-tool-use",
+        json={
+            "session_id": SESSION,
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": PLAN_PATH,
+                "old_string": "x",
+                "new_string": "y",
+            },
+            "tool_response": {},
+            "plan_content": PLAN_BODY,
+        },
+    ).json()
+
+    # assert: retrieval ran off the full text and the manifest was captured
+    assert any(a.startswith("Approach:") for a in pipeline.queries[-1]["aspects"])
+    context = body["hookSpecificOutput"]["additionalContext"]
+    assert "captured" in context
+    assert "## BetterAI required skill: rename-safely" in context
+
+
+def test_forced_skills_lead_the_cache_served_required_list(tmp_path):
+    # arrange
+    corpus = FakeCorpus([make_skill("write-scoped-plan", forced=True)])
+    client, deps = _client_and_deps(
+        tmp_path, pipeline=_matching_pipeline(), corpus=corpus
+    )
+    _post_plan(client)
+
+    # act
+    client.post(
+        "/hooks/user-prompt-submit", json={"session_id": SESSION, "prompt": "go"}
+    )
+
+    # assert: forced first, cached scored skills after
+    serve = [e for e in audit_events(deps) if e["event_type"] == "prompt_serve"][-1]
+    assert serve["payload"]["required"] == ["write-scoped-plan", "rename-safely"]
+
+
+def test_plan_tools_pass_pre_tool_gates_as_bootstrap(tmp_path):
+    # arrange: unread requirements + delivery evidence without a receipt
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+    read_store.set_required(deps.store, SESSION, ["rename-safely"])
+    receipt_store.mark_prompt_seen(deps.store, SESSION)
+
+    # act / assert: the plan tools are loaders — gating them would deadlock
+    for tool in ("mcp__betterai__get_plan_skills", "mcp__betterai__format_plan_skills"):
+        decision = client.post(
+            "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": tool}
+        ).json()
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+# Claude Code strictly validates JSON hook stdout: unknown top-level keys
+# fail the whole output ("(root): Invalid input"), and additionalContext
+# must be a string or absent — never null.
+ALLOWED_TOP_LEVEL = {
+    "continue",
+    "stopReason",
+    "suppressOutput",
+    "systemMessage",
+    "terminalSequence",
+    "decision",
+    "reason",
+    "hookSpecificOutput",
+}
+HOOK_OUTPUT_KEYS = {
+    "UserPromptSubmit": {"hookEventName", "additionalContext"},
+    "PreToolUse": {
+        "hookEventName",
+        "permissionDecision",
+        "permissionDecisionReason",
+        "additionalContext",
+    },
+    "PostToolUse": {"hookEventName", "additionalContext"},
+    "Stop": {"hookEventName", "additionalContext"},
+}
+
+
+def _assert_schema_valid(body: dict) -> None:
+    assert set(body) <= ALLOWED_TOP_LEVEL, f"off-schema top-level keys: {set(body)}"
+    output = body.get("hookSpecificOutput")
+    if output is not None:
+        event = output["hookEventName"]
+        assert set(output) <= HOOK_OUTPUT_KEYS[event], f"off-schema {event} keys"
+        if "additionalContext" in output:
+            assert isinstance(output["additionalContext"], str)
+            assert output["additionalContext"]
+
+
+def test_every_hook_response_is_schema_valid(tmp_path):
+    # arrange: exercise allow, deny, block, no-context, and malformed paths
+    client, deps = _client_and_deps(tmp_path, pipeline=_matching_pipeline())
+    denied = "sess-schema"
+    read_store.set_required(deps.store, denied, ["rename-safely"])
+    receipt_store.mark_retrieved(deps.store, denied)
+    receipt_store.mark_prompt_seen(deps.store, denied)
+
+    # act
+    responses = [
+        client.post(
+            "/hooks/user-prompt-submit",
+            json={"session_id": SESSION, "prompt": "rename a variable safely"},
+        ).json(),
+        client.post(
+            "/hooks/pre-tool-use", json={"session_id": denied, "tool_name": "Edit"}
+        ).json(),
+        client.post(
+            "/hooks/pre-tool-use", json={"session_id": SESSION, "tool_name": "Read"}
+        ).json(),
+        _post_plan(client),
+        client.post(
+            "/hooks/post-tool-use",
+            json={"session_id": SESSION, "tool_name": "Read", "tool_input": {}},
+        ).json(),
+        client.post("/hooks/stop", json={"session_id": denied}).json(),
+        client.post("/hooks/stop", json={"session_id": denied}).json(),
+        client.post("/hooks/session-end", json={"session_id": SESSION}).json(),
+        client.post(
+            "/hooks/pre-tool-use",
+            content=b"not json",
+            headers={"content-type": "application/json"},
+        ).json(),
+    ]
+
+    # assert
+    for body in responses:
+        _assert_schema_valid(body)
+    # A context-free PostToolUse omits additionalContext entirely (never null)
+    assert responses[4] == {"hookSpecificOutput": {"hookEventName": "PostToolUse"}}
 
 
 def test_malformed_body_and_missing_session_never_500(tmp_path):
@@ -367,6 +690,6 @@ def test_malformed_body_and_missing_session_never_500(tmp_path):
 
     # assert
     assert garbage.status_code == 200
-    assert garbage.json()["block"] is False
+    assert garbage.json()["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert no_session.status_code == 200
-    assert no_session.json()["block"] is False
+    assert no_session.json() == {}

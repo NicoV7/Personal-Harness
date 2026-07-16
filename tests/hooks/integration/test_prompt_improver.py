@@ -18,6 +18,7 @@ from app.retrieval.expand import Expansion
 from tests.mcp.gate_helpers import (
     FakePipeline,
     FakeScored,
+    audit_events,
     make_deps,
     make_settings,
     make_skill,
@@ -69,13 +70,14 @@ class TestPromptImprover:
         # assert
         assert response.status_code == 200
         assert pipeline.queries[-1]["aspects"] == ["http error handling"]
-        assert response.json()["required_skill_ids"] == ["no-retries"]
+        context = response.json()["hookSpecificOutput"]["additionalContext"]
+        assert "## BetterAI required skill: no-retries" in context
 
     def test_expansion_failure_warns_and_falls_back_to_raw_prompt(self, tmp_path):
         # arrange: improver enabled but no OpenRouter key file exists, so
         # building the chat client raises a typed error inside _expand.
         pipeline = FakePipeline(results=[FakeScored(make_skill("no-retries"))])
-        client, _ = _client_and_deps(
+        client, deps = _client_and_deps(
             tmp_path, pipeline=pipeline, improver_model="test/improver"
         )
 
@@ -90,7 +92,8 @@ class TestPromptImprover:
         assert pipeline.queries[-1]["aspects"] is None
         context = body["hookSpecificOutput"]["additionalContext"]
         assert "prompt expansion FAILED" in context
-        assert body["required_skill_ids"] == ["no-retries"]
+        serve = [e for e in audit_events(deps) if e["event_type"] == "prompt_serve"][-1]
+        assert serve["payload"]["required"] == ["no-retries"]
 
     def test_disabled_improver_never_expands(self, tmp_path):
         # arrange
@@ -128,7 +131,11 @@ class TestPlanModeSurfacing:
         assert read_store.missing(deps.store, SESSION) == []
         context = body["hookSpecificOutput"]["additionalContext"]
         assert "## BetterAI required skill: write-scoped-plan" in context
-        assert pipeline.queries[-1]["intent"].startswith("Plan: harden the http client")
+        # Full-plan retrieval: intent joins the h2 headings, and each
+        # section rides as its own aspect (heading + body head).
+        query = pipeline.queries[-1]
+        assert query["intent"] == "Approach; Files to touch"
+        assert any(aspect.startswith("Approach:") for aspect in query["aspects"])
 
     def test_non_plan_write_does_not_query(self, tmp_path):
         # arrange

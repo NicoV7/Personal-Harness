@@ -81,6 +81,11 @@ class EmbeddingProviderError(BetterAIError):
     http_status = 502
 
 
+class PlanCacheMissError(BetterAIError):
+    code = "BAI-605"
+    http_status = 404
+
+
 class ContainerOpError(BetterAIError):
     code = "BAI-606"
 
@@ -179,6 +184,15 @@ class Errors:
     @staticmethod
     def embedding_provider(detail: str) -> EmbeddingProviderError:
         return EmbeddingProviderError(f"embedding provider request failed: {detail}")
+
+    @staticmethod
+    def plan_cache_miss(plan_path: str | None) -> PlanCacheMissError:
+        target = plan_path or "the latest plan"
+        return PlanCacheMissError(
+            f"no cached skills for {target}; write the plan file first (the "
+            "post-tool-use hook populates the cache) or pass skill_ids from "
+            "the plan's '## Skill Audit' table"
+        )
 
     @staticmethod
     def container_op_failed(detail: str) -> ContainerOpError:

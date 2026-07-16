@@ -80,6 +80,7 @@ def search(
                 continue
             if not keyword_hit(hit, query_text):
                 continue
+            hit["matched_query"] = query_text
             _keep_best(kept, hit)
     ranked = sorted(kept.values(), key=hit_score, reverse=True)
     return ranked[:top_k] if top_k else ranked

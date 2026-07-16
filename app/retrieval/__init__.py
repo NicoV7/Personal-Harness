@@ -21,11 +21,16 @@ from app.settings import Settings
 
 @dataclass(frozen=True)
 class ScoredArtifact:
-    """One retrieval result: the tool layer reads .artifact/.score/.reason."""
+    """One retrieval result: the tool layer reads .artifact/.score/.reason.
+
+    provenance carries the winning query text (the aspect whose HybridQuery
+    scored this hit best) so serving layers can say WHY a skill matched.
+    """
 
     artifact: Artifact
     score: float
     reason: str = "hybrid"
+    provenance: str | None = None
 
 
 class Retrieval:
@@ -67,7 +72,12 @@ class Retrieval:
             top_k=top_k,
         )
         results = [
-            ScoredArtifact(self._artifact_for(hit), score=hit_score(hit), reason="hybrid")
+            ScoredArtifact(
+                self._artifact_for(hit),
+                score=hit_score(hit),
+                reason="hybrid",
+                provenance=hit.get("matched_query"),
+            )
             for hit in hits
         ]
         if on_progress is not None:

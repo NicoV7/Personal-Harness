@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.audit import AuditLog
     from app.corpus.reader import CorpusReader
+    from app.hooks.plan_cache import PlanSkillCache
     from app.hooks.state import SessionStore
     from app.openrouter import ChatClientProvider
     from app.retrieval import Retrieval
@@ -48,3 +49,4 @@ class Deps:
     store: SessionStore
     chat: ChatClientProvider
     sync: SkillsSync
+    plan_skills: PlanSkillCache

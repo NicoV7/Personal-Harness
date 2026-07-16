@@ -42,6 +42,8 @@ HOOK_EVENTS = (
 AUTO_ALLOWED_TOOLS = (
     "mcp__betterai__query_skills",
     "mcp__betterai__get_skill",
+    "mcp__betterai__get_plan_skills",
+    "mcp__betterai__format_plan_skills",
     "mcp__betterai__list_skills",
 )
 from app.installer.instructions import ALWAYS_CONSULT_INSTRUCTIONS
