@@ -32,6 +32,20 @@ def test_scripts_fail_open_and_exit_two_only_on_block(tmp_path: Path) -> None:
         assert "Authorization: Bearer" in body
 
 
+def test_only_post_tool_use_attaches_plan_content(tmp_path: Path) -> None:
+    # arrange / act
+    write_hook_scripts(str(tmp_path))
+    # assert: the plan-content snippet rides exactly one script, fail-open
+    for name in HOOK_NAMES:
+        body = (tmp_path / ".betterai" / "hooks" / name).read_text()
+        if name == "post-tool-use":
+            assert "plan_content" in body
+            assert "*/.claude/plans/*.md" in body
+            assert "|| true" in body
+        else:
+            assert "plan_content" not in body
+
+
 def test_scripts_read_token_at_runtime_never_embed_it(tmp_path: Path) -> None:
     # arrange
     token_dir = tmp_path / ".betterai"

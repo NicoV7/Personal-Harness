@@ -31,7 +31,7 @@ set -u
 BETTERAI_HOME="${{BETTERAI_HOME:-$HOME/.betterai}}"
 TOKEN_FILE="$BETTERAI_HOME/token"
 PAYLOAD="$(cat)"
-RESPONSE="$(curl -s --connect-timeout 2 --max-time 5 -X POST \\
+{extra}RESPONSE="$(curl -s --connect-timeout 2 --max-time 5 -X POST \\
   -H "Authorization: Bearer $(cat "$TOKEN_FILE" 2>/dev/null)" \\
   -H "content-type: application/json" \\
   --data "$PAYLOAD" \\
@@ -47,14 +47,31 @@ exit 0
 """
 
 
+# Attach the full plan file for plan-glob paths: Edit payloads carry only
+# fragments and the Dockerized server cannot read host files. The pattern
+# mirrors the BETTERAI_PLAN_GLOB literal written by install_env.py. Any
+# failure leaves PAYLOAD untouched (fail-open). Kept OUT of the template
+# so its bash/python braces never hit str.format.
+_PLAN_CONTENT_SNIPPET = """FILE_PATH="$(printf '%s' "$PAYLOAD" | python3 -c 'import json,sys; d=json.load(sys.stdin); t=d.get("tool_input") or {}; print(t.get("file_path") or t.get("notebook_path") or "")' 2>/dev/null || true)"
+case "$FILE_PATH" in
+  */.claude/plans/*.md)
+    if [ -f "$FILE_PATH" ]; then
+      NEW_PAYLOAD="$(printf '%s' "$PAYLOAD" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["plan_content"]=open(sys.argv[1],encoding="utf-8").read(); print(json.dumps(d))' "$FILE_PATH" 2>/dev/null || true)"
+      if [ -n "$NEW_PAYLOAD" ]; then PAYLOAD="$NEW_PAYLOAD"; fi
+    fi ;;
+esac
+"""
+
+
 def write_hook_scripts(home: str) -> list[str]:
     """Write all five scripts, mode 0755; returns the written paths."""
     hooks_dir = Path(betterai_root(home)) / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     written: list[str] = []
     for name in HOOK_NAMES:
+        extra = _PLAN_CONTENT_SNIPPET if name == "post-tool-use" else ""
         path = hooks_dir / name
-        path.write_text(_SCRIPT_TEMPLATE.format(name=name, port=MCP_PORT))
+        path.write_text(_SCRIPT_TEMPLATE.format(name=name, port=MCP_PORT, extra=extra))
         path.chmod(0o755)
         written.append(str(path))
     return written
