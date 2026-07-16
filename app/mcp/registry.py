@@ -23,11 +23,13 @@ from __future__ import annotations
 from app.hooks.chain import HookChain
 from app.hooks.events import PostToolUse, PreToolUse, SessionEnd, Stop, UserPromptSubmit
 
-# Tools, alphabetical. The surface is exactly these seven.
+# Tools, alphabetical. The surface is exactly these nine.
 TOOL_MODULES = (
     "app.mcp.add_skill",
     "app.mcp.configure_skill",
     "app.mcp.edit_skill",
+    "app.mcp.format_plan_skills",
+    "app.mcp.get_plan_skills",
     "app.mcp.get_skill",
     "app.mcp.list_skills",
     "app.mcp.query_skills",
@@ -36,10 +38,13 @@ TOOL_MODULES = (
 
 # Bootstrap tools are always allowed through PreToolUse gates so an agent
 # can satisfy the gates. Matching is substring-based to cover client
-# prefixes like `mcp__betterai__query_skills`.
+# prefixes like `mcp__betterai__query_skills`. NOTE: "get_skill" does NOT
+# substring-match get_plan_skills — both plan tools need their own entry.
 BOOTSTRAP_TOOL_FRAGMENTS = (
     "query_skills",
     "get_skill",
+    "get_plan_skills",
+    "format_plan_skills",
     "list_skills",
     "start_container",
 )

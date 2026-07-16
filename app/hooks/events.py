@@ -32,6 +32,10 @@ class PostToolUse:
     tool_name: str
     tool_input: dict[str, Any] = field(default_factory=dict)
     tool_response: dict[str, Any] = field(default_factory=dict)
+    # Full plan-file text attached host-side by the post-tool-use shim for
+    # plan-glob paths: Edit/MultiEdit payloads carry only fragments and the
+    # server cannot read host files (Docker boundary).
+    plan_content: str | None = None
 
 
 @dataclass(frozen=True)

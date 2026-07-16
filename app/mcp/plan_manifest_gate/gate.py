@@ -64,9 +64,13 @@ class CaptureManifestHandler:
         ]
         if not plan_paths:
             return None
-        content = written_content(event.tool_input)
+        content, authoritative = plan_text(event)
         parsed = parse_files_to_touch(content)
         if not parsed.ok:
+            if not authoritative and manifest_store.entries(deps.store, event.session_id):
+                # A fragment edit (no shim plan_content) must not clobber a
+                # manifest captured from full text — keep the gate armed.
+                return None
             manifest_store.deactivate(deps.store, event.session_id)
             return HookDecision.allow(
                 f"BetterAI plan manifest warning: could not parse {plan_paths[0]} "
@@ -153,6 +157,21 @@ class ClearManifestHandler:
         assert isinstance(event, SessionEnd)
         manifest_store.clear(deps.store, event.session_id)
         return None
+
+
+def plan_text(event: PostToolUse) -> tuple[str, bool]:
+    """Best available plan text plus whether it is the FULL document.
+    Full text comes from the host shim's plan_content field or a Write's
+    content; an Edit/MultiEdit new_string is only a fragment (False)."""
+    if isinstance(event.plan_content, str):
+        return event.plan_content, True
+    value = event.tool_input.get("content")
+    if isinstance(value, str):
+        return value, True
+    value = event.tool_input.get("new_string")
+    if isinstance(value, str):
+        return value, False
+    return "", False
 
 
 def written_content(tool_input: dict[str, Any]) -> str:

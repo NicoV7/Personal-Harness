@@ -17,10 +17,11 @@ from starlette.routing import Route
 
 from app.deps import CallMeta, Deps
 from app.errors import BetterAIError
+from app.hooks import plan_cache
 from app.hooks.events import HookDecision, PostToolUse, PreToolUse, SessionEnd, Stop, UserPromptSubmit
 from app.mcp import registry
 from app.mcp.plan_manifest_gate import store as manifest_store
-from app.mcp.plan_manifest_gate.gate import mutated_paths, written_content
+from app.mcp.plan_manifest_gate.gate import mutated_paths, plan_text
 from app.mcp.plan_manifest_gate.parser import parse_files_to_touch
 from app.mcp.read_gate import store as read_store
 from app.mcp.retrieval_receipt_gate import store as receipt_store
@@ -36,6 +37,12 @@ EDIT_INCREMENTALLY_SKILL_ID = "edit-incrementally"
 # BETTERAI_COMMENT_VERBOSITY env seed (configure_skill writes it).
 COMMENT_SKILL_ID = "concise-comments"
 
+# Plan-text retrieval: one aspect per '## ' section (heading + body head),
+# batched to the prompt improver's MAX_ASPECTS bound so no single
+# HybridQuery averages the whole plan away.
+PLAN_ASPECT_BATCH = 8
+PLAN_SECTION_CHARS = 240
+
 
 def hook_routes(deps: Deps) -> list[Route]:
     chain = registry.build_chain()
@@ -47,7 +54,13 @@ def hook_routes(deps: Deps) -> list[Route]:
         cwd = _str_field(body, "cwd") or None
         chain.run(UserPromptSubmit(session_id=session_id, prompt=prompt, cwd=cwd), deps)
         sync_line = deps.sync.ensure_fresh(deps)
-        artifacts, skills, warning = await _retrieve_required(deps, prompt)
+        # A captured plan makes retrieval per-plan: serve from the plan
+        # cache (zero embedding calls) and fall back to fresh retrieval
+        # when no plan is active or the cache entry is gone.
+        cached = _plan_cache_serve(deps, session_id)
+        artifacts, skills, warning = (
+            cached if cached is not None else await _retrieve_required(deps, prompt)
+        )
         required = [artifact.id for artifact in artifacts]
         served = artifacts if warning is None else []
         if session_id:
@@ -60,9 +73,16 @@ def hook_routes(deps: Deps) -> list[Route]:
             receipt_store.mark_prompt_seen(deps.store, session_id)
             for artifact in served:
                 read_store.mark_read(deps.store, session_id, artifact.id)
+            serve_payload = {
+                "required": required,
+                "served": len(served),
+                "warning": bool(warning),
+            }
+            if cached is not None:
+                serve_payload["plan_path"] = plan_cache.active_plan(deps.store, session_id)
             deps.audit.record(
                 "prompt_serve",
-                {"required": required, "served": len(served), "warning": bool(warning)},
+                serve_payload,
                 CallMeta(
                     agent_session_id=session_id,
                     parent_agent_session_id=None,
@@ -110,6 +130,7 @@ def hook_routes(deps: Deps) -> list[Route]:
             tool_name=tool_name,
             tool_input=_dict_field(body, "tool_input", "toolInput"),
             tool_response=_dict_field(body, "tool_response", "toolResponse"),
+            plan_content=_str_field(body, "plan_content") or None,
         )
         decision = chain.run(event, deps)
         plan_context = await _surface_plan_skills(deps, event)
@@ -206,6 +227,35 @@ def _stop_payload(
     }
 
 
+def _plan_cache_serve(
+    deps: Deps, session_id: str | None
+) -> tuple[list, list[dict], str | None] | None:
+    """Plan-scoped serve: once a plan is captured for this session, prompt
+    turns are served from the plan cache with ZERO embedding calls. None
+    falls back to fresh retrieval — no plan active, entry evicted/lost on
+    restart, or the plan matched nothing (silent, never an error). The
+    caller runs the SAME receipt block as fresh retrieval: delivery is
+    still the read event and the retrieval receipt (77b3658 post-mortem)."""
+    if not session_id:
+        return None
+    plan_path = plan_cache.active_plan(deps.store, session_id)
+    if not plan_path:
+        return None
+    entry = deps.plan_skills.get(plan_path)
+    if entry is None or not entry.matches:
+        return None
+    forced, forced_warning = _forced_artifacts(deps)
+    ranked = sorted(entry.matches.values(), key=lambda match: match.score, reverse=True)
+    artifacts = [match.artifact for match in ranked]
+    required = _cap_required(forced, artifacts, deps.settings.required_reads_max)
+    summaries = [
+        _skill_summary(a)
+        for a in artifacts
+        if getattr(a, "artifact_type", "skill") == "skill"
+    ]
+    return required, summaries, forced_warning
+
+
 async def _retrieve_required(
     deps: Deps, prompt: str
 ) -> tuple[list, list[dict], str | None]:
@@ -265,8 +315,12 @@ def _expand(deps: Deps, prompt: str) -> tuple[Expansion, str | None]:
 
 async def _surface_plan_skills(deps: Deps, event: PostToolUse) -> str | None:
     """Plan-mode skill surfacing: when the agent writes a plan file, run
-    one extra retrieval over the plan's headings and '## Files to touch'
-    paths and add the matched skills to this session's required reads."""
+    retrieval over the FULL plan text (one aspect per '## ' section,
+    batched) and cache the matches by plan path so any session — subagents
+    included — can fetch them via get_plan_skills. Only matches NEW to the
+    plan are served; the '## Skill Audit' section is stripped and an
+    unchanged content hash skips retrieval entirely, so the audit
+    write-back and repeated saves never loop the hook."""
     if not event.session_id or event.tool_name not in registry.MUTATING_TOOL_NAMES:
         return None
     plan_paths = [
@@ -276,36 +330,115 @@ async def _surface_plan_skills(deps: Deps, event: PostToolUse) -> str | None:
     ]
     if not plan_paths:
         return None
-    content = written_content(event.tool_input)
-    headings = [
-        line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")
-    ]
+    plan_path = manifest_store.normalize_path(plan_paths[0])
+    plan_cache.set_active_plan(deps.store, event.session_id, plan_path)
+    content, authoritative = plan_text(event)
+    if not authoritative:
+        # Edit/MultiEdit fragment without the shim's plan_content: the
+        # session mapping is recorded, but a fragment must never poison
+        # the cache — the next full write (or upgraded shim) fills it.
+        return None
+    stripped = plan_cache.strip_skill_audit(content)
+    content_hash = plan_cache.plan_content_hash(stripped)
+    entry = deps.plan_skills.get(plan_path)
+    if entry is not None and entry.content_hash == content_hash:
+        return None
+    aspect_headings = _aspect_headings(plan_cache.plan_sections(stripped))
     manifest = parse_files_to_touch(content)
-    file_paths = [entry.path for entry in manifest.entries] if manifest.ok else None
+    file_paths = [item.path for item in manifest.entries] if manifest.ok else None
+    intent = (
+        "; ".join(heading for heading in aspect_headings.values() if heading != "preamble")
+        or "implementation plan"
+    )
     try:
-        results = await deps.pipeline.query(
-            intent="; ".join(headings[:8]) or "implementation plan",
-            aspects=headings[1:9] or None,
-            file_paths=file_paths,
-        )
+        best = await _query_plan_aspects(deps, intent, list(aspect_headings), file_paths)
     except BetterAIError as error:
         return (
             f"BetterAI plan skill surfacing FAILED [{error.code}]: {error}. "
             "The plan proceeds without extra skill requirements."
         )
-    artifacts = [getattr(result, "artifact", result) for result in results]
-    served = artifacts[: deps.settings.required_reads_max]
+    matches = [
+        plan_cache.PlanSkillMatch(
+            artifact=getattr(result, "artifact", result),
+            score=float(result.score),
+            provenance=_plan_provenance(result, aspect_headings),
+            served_at=plan_cache.now_iso(),
+        )
+        for result in best
+    ]
+    new_matches = deps.plan_skills.upsert(plan_path, content_hash, matches)
+    served = new_matches[: deps.settings.required_reads_max]
     if not served:
         return None
-    ids = [artifact.id for artifact in served]
+    ids = [match.artifact.id for match in served]
     read_store.mark_required(deps.store, event.session_id, ids)
-    for artifact in served:
-        read_store.mark_read(deps.store, event.session_id, artifact.id)
-    sections = "\n".join(_served_section(artifact) for artifact in served)
-    return (
-        "BetterAI plan-mode skills for this plan are served below "
-        f"(receipts recorded at delivery).\n{sections}"
+    for match in served:
+        read_store.mark_read(deps.store, event.session_id, match.artifact.id)
+    deps.audit.record(
+        "plan_serve",
+        {
+            "plan_path": plan_path,
+            "served": ids,
+            "provenance": {match.artifact.id: match.provenance for match in served},
+            "cache_hit": False,
+        },
+        CallMeta(
+            agent_session_id=event.session_id,
+            parent_agent_session_id=None,
+            subagent_class="main",
+            tool_call_id="hook.post_tool_use",
+        ),
     )
+    sections = "\n".join(_served_section(match.artifact) for match in served)
+    return (
+        "BetterAI plan-mode skills for this plan are served below (receipts "
+        f"recorded at delivery; cached for get_plan_skills).\n{sections}"
+    )
+
+
+def _aspect_headings(sections: list[tuple[str, str]]) -> dict[str, str]:
+    """Aspect text -> section heading, one aspect per plan section. The
+    body head rides along so a section's content matches, not just its
+    title; the preamble (before the first '## ') gets its own aspect."""
+    aspects: dict[str, str] = {}
+    for heading, body in sections:
+        head = body[:PLAN_SECTION_CHARS]
+        text = (f"{heading}: {head}" if heading else head).strip()
+        if text:
+            aspects[text] = heading or "preamble"
+    return aspects
+
+
+async def _query_plan_aspects(
+    deps: Deps, intent: str, aspects: list[str], file_paths: list[str] | None
+) -> list:
+    """One pipeline query per batch of PLAN_ASPECT_BATCH aspects, unioned
+    by artifact id keeping the best score (long plans exceed the
+    per-query aspect bound; averaging them into one query loses phases)."""
+    best: dict[str, Any] = {}
+    batches = [
+        aspects[start : start + PLAN_ASPECT_BATCH]
+        for start in range(0, len(aspects), PLAN_ASPECT_BATCH)
+    ] or [[]]
+    for index, batch in enumerate(batches):
+        results = await deps.pipeline.query(
+            intent=intent,
+            aspects=batch or None,
+            file_paths=file_paths if index == 0 else None,
+        )
+        for result in results:
+            artifact = getattr(result, "artifact", result)
+            current = best.get(artifact.id)
+            if current is None or float(result.score) > float(current.score):
+                best[artifact.id] = result
+    return list(best.values())
+
+
+def _plan_provenance(result: Any, aspect_headings: dict[str, str]) -> str:
+    matched = getattr(result, "provenance", None)
+    if matched and matched in aspect_headings:
+        return f"plan section '{aspect_headings[matched]}'"
+    return "plan text"
 
 
 def _forced_artifacts(deps: Deps) -> tuple[list, str | None]:

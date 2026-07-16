@@ -128,7 +128,11 @@ class TestPlanModeSurfacing:
         assert read_store.missing(deps.store, SESSION) == []
         context = body["hookSpecificOutput"]["additionalContext"]
         assert "## BetterAI required skill: write-scoped-plan" in context
-        assert pipeline.queries[-1]["intent"].startswith("Plan: harden the http client")
+        # Full-plan retrieval: intent joins the h2 headings, and each
+        # section rides as its own aspect (heading + body head).
+        query = pipeline.queries[-1]
+        assert query["intent"] == "Approach; Files to touch"
+        assert any(aspect.startswith("Approach:") for aspect in query["aspects"])
 
     def test_non_plan_write_does_not_query(self, tmp_path):
         # arrange

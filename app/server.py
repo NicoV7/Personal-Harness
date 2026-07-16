@@ -37,6 +37,7 @@ _PROGRESS_STAGES = {"results": 1.0, "parsed": 1.0, "classified": 2.0, "indexed":
 def build_deps(settings: Settings) -> Deps:
     # Imported here so importing this module never constructs the redis/
     # openai clients (tests import app.server for wiring only).
+    from app.hooks.plan_cache import PlanSkillCache
     from app.openrouter import ChatClientProvider
     from app.retrieval import Retrieval
     from app.sync.skills import SkillsSync
@@ -49,6 +50,7 @@ def build_deps(settings: Settings) -> Deps:
         store=InMemorySessionStore(),
         chat=ChatClientProvider(settings),
         sync=SkillsSync(),
+        plan_skills=PlanSkillCache(),
     )
 
 
