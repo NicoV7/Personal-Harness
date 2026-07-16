@@ -262,3 +262,42 @@ class TestTopK:
         )
         # assert
         assert [hit["id"] for hit in results] == ["high", "mid"]
+
+
+class TestProvenance:
+    def test_kept_hits_carry_the_winning_aspect_as_matched_query(self, settings):
+        # arrange: the hit only appears for the aspect query
+        index = FakeIndex({"error handling": [_hit("retry-rules", 0.9, text_score=1.0)]})
+
+        # act
+        results = search(
+            "make the client resilient",
+            vectorizer=FakeVectorizer(),
+            index=index,
+            settings=settings,
+            aspects=["error handling"],
+        )
+
+        # assert
+        assert results[0]["matched_query"] == "error handling"
+
+    def test_best_scoring_query_wins_the_annotation(self, settings):
+        # arrange: same id returned by prompt and aspect with different scores
+        index = FakeIndex(
+            {
+                "make the client": [_hit("retry-rules", 0.5, text_score=1.0)],
+                "error handling": [_hit("retry-rules", 0.9, text_score=1.0)],
+            }
+        )
+
+        # act
+        results = search(
+            "make the client resilient",
+            vectorizer=FakeVectorizer(),
+            index=index,
+            settings=settings,
+            aspects=["error handling"],
+        )
+
+        # assert: _keep_best kept the aspect hit, so its annotation survives
+        assert results[0]["matched_query"] == "error handling"
