@@ -67,7 +67,32 @@ def _dry_run_checks() -> list[Check]:
         checks += _claude_checks(Path(home))
         checks += _codex_checks(Path(home))
         checks += _secret_checks(Path(home), root, key_value)
+    checks += _degraded_install_checks()
     return checks
+
+
+def _degraded_install_checks() -> list[Check]:
+    """--no-openrouter-key path: installs cleanly, writes NO key file."""
+    from app.cli import perform_install  # local import: cli imports evals
+
+    with tempfile.TemporaryDirectory(prefix="betterai-smoke-nokey-") as home:
+        try:
+            perform_install(
+                home,
+                clients=["claude"],
+                granularity="none",
+                memory_provider="none",
+                judge_model=SMOKE_JUDGE_MODEL,
+                run_client_exec=False,
+            )
+        except BetterAIError as error:
+            return [Check("degraded install (no key)", False, f"[{error.code}] {error}")]
+        root = Path(home) / ".betterai"
+        return [
+            Check("degraded install (no key)", True),
+            Check("degraded: no key file written", not (root / "openrouter-key").exists()),
+            Check("degraded: .env still complete", "BETTERAI_OPENROUTER_API_KEY_FILE" in (root / ".env").read_text()),
+        ]
 
 
 def _tree_checks(root: Path) -> list[Check]:

@@ -40,16 +40,30 @@ mutating tools denied until the skills are actually read
 
 ## Install
 
+One command (installs uv if missing, checks Docker, then chains
+install → start → index → doctor; safe to re-run):
+
 ```bash
-git clone https://github.com/NicoV7/Personal-Harness.git && cd Personal-Harness
-./install.sh                      # uv tool install + betterai install
-betterai start                    # compose up: betterai + redis:8.8 + pgvector
-betterai index                    # ingest the corpus
-betterai doctor
+curl -fsSL https://raw.githubusercontent.com/NicoV7/Personal-Harness/main/bootstrap.sh | sh
 ```
 
-Requirements: Docker (compose v2), [uv](https://docs.astral.sh/uv/), an
-OpenRouter API key (written to `~/.betterai/openrouter-key`).
+From a checkout, `./install.sh` runs the same bootstrap. The OpenRouter
+key is prompted interactively (or pass `BETTERAI_OPENROUTER_KEY_FILE=…`);
+leaving it empty installs in degraded mode — the server runs but
+retrieval/index fail loud until a key lands in `~/.betterai/openrouter-key`.
+
+Requirements: Docker (compose v2). Everything else is bootstrapped.
+
+## Dashboard
+
+```bash
+betterai ui                       # opens http://127.0.0.1:7788 (or a free port)
+```
+
+Local-only web UI: skills manager (browse/edit/configure/add), logs &
+traces from the audit JSONL grouped by agent session, doctor panel with
+fix hints, and a usage stats strip. No telemetry — every number is
+computed from files under `~/.betterai`.
 
 ## Development
 

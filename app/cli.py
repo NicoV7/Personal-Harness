@@ -40,25 +40,41 @@ def perform_install(
     granularity: str,
     memory_provider: str,
     judge_model: str,
-    openrouter_key_file: str,
+    openrouter_key_file: str = "",
+    openrouter_key: str = "",
     run_client_exec: bool,
     prompt_improver_model: str = "",
 ) -> str:
-    """Write the full install tree under <user_home>/.betterai."""
+    """Write the full install tree under <user_home>/.betterai.
+
+    Key handling: a key file wins over an inline value; neither means an
+    explicit degraded install — no key file is written, retrieval/index
+    fail loud (BAI-604 family) until one lands, and doctor's
+    `key-present` check nags with the exact fix.
+    """
     root = Path(betterai_root(user_home))
     for subdir in _SUBDIRS:
         (root / subdir).mkdir(parents=True, exist_ok=True)
     _write_token(root / "token")
-    _copy_key_file(openrouter_key_file, root / "openrouter-key")
-    values = install_env_values(
-        user_home,
-        overrides={
-            "BETTERAI_OPENROUTER_AGENT_MODEL": judge_model,
-            "BETTERAI_PROMPT_IMPROVER_MODEL": prompt_improver_model,
-            "BETTERAI_EDIT_GRANULARITY": granularity,
-            "BETTERAI_MEMORY_PROVIDER": memory_provider,
-        },
-    )
+    if openrouter_key_file:
+        _copy_key_file(openrouter_key_file, root / "openrouter-key")
+    elif openrouter_key:
+        _write_private(root / "openrouter-key", openrouter_key.strip() + "\n")
+    overrides = {
+        "BETTERAI_OPENROUTER_AGENT_MODEL": judge_model,
+        "BETTERAI_PROMPT_IMPROVER_MODEL": prompt_improver_model,
+        "BETTERAI_EDIT_GRANULARITY": granularity,
+        "BETTERAI_MEMORY_PROVIDER": memory_provider,
+    }
+    # A deliberate re-install must never orphan the live postgres volume:
+    # the volume keeps the first password forever, so a freshly minted one
+    # would brick the DSN. Preserve the existing password if present.
+    if existing_password := _read_env_value(root / ".env", "BETTERAI_POSTGRES_PASSWORD"):
+        overrides["BETTERAI_POSTGRES_PASSWORD"] = existing_password
+        overrides["BETTERAI_POSTGRES_DSN"] = (
+            f"postgresql://betterai:{existing_password}@postgres:5432/betterai"
+        )
+    values = install_env_values(user_home, overrides=overrides)
     _write_env(root, values)
     _write_private(root / "docker-compose.yml", render_compose(user_home, memory_provider))
     _make_memory_dirs(memory_provider, user_home)
@@ -69,14 +85,25 @@ def perform_install(
     return str(root)
 
 
+DEFAULT_JUDGE_MODEL = "openai/gpt-5-mini"
+
+
 @app.command()
 def install(
     clients: str = typer.Option("claude,codex", "--clients"),
     granularity: str = typer.Option("none", "--granularity"),
     with_memory: str = typer.Option("none", "--with-memory"),
-    judge_model: str = typer.Option(..., "--judge-model", prompt="OpenRouter judge model id"),
+    judge_model: str = typer.Option(DEFAULT_JUDGE_MODEL, "--judge-model", help="OpenRouter judge model id"),
     openrouter_key_file: str = typer.Option(
-        ..., "--openrouter-key-file", prompt="Path to a file containing your OpenRouter API key"
+        "", "--openrouter-key-file", help="Path to a file containing your OpenRouter API key"
+    ),
+    openrouter_key: str = typer.Option(
+        "", "--openrouter-key", help="OpenRouter API key value (written to ~/.betterai/openrouter-key, 0600)"
+    ),
+    no_openrouter_key: bool = typer.Option(
+        False,
+        "--no-openrouter-key",
+        help="Install without a key (degraded: retrieval/index fail until one is written)",
     ),
     prompt_improver_model: str = typer.Option(
         "",
@@ -85,6 +112,16 @@ def install(
     ),
 ) -> None:
     """Write dirs, token, .env, compose, hooks, bridge, and client adapters."""
+    if no_openrouter_key and (openrouter_key_file or openrouter_key):
+        _print_exit(
+            Errors.config_invalid(
+                "--no-openrouter-key", "cannot be combined with --openrouter-key/--openrouter-key-file"
+            )
+        )
+    if not (openrouter_key_file or openrouter_key or no_openrouter_key):
+        openrouter_key = typer.prompt(
+            "Paste your OpenRouter API key (leave empty to skip)", hide_input=True, default=""
+        ).strip()
     root = _fail_loud(
         lambda: perform_install(
             _user_home(),
@@ -93,12 +130,20 @@ def install(
             memory_provider=with_memory,
             judge_model=judge_model,
             openrouter_key_file=openrouter_key_file,
+            openrouter_key=openrouter_key,
             run_client_exec=os.environ.get("BETTERAI_SKIP_CLIENT_EXEC") != "1",
             prompt_improver_model=prompt_improver_model,
         )
     )
     typer.echo(f"betterai install: ready at {root}")
-    typer.echo("token: <root>/token (not printed); next: `betterai start`")
+    if not (openrouter_key_file or openrouter_key):
+        typer.echo(
+            "WARNING: no OpenRouter key installed — the server will run but retrieval, "
+            "indexing, and ingest FAIL LOUD until you write a key to "
+            "~/.betterai/openrouter-key (mode 0600). `betterai doctor` tracks this.",
+            err=True,
+        )
+    typer.echo("token: <root>/token (not printed); next: `betterai start`, then `betterai ui`")
 
 
 @app.command()
@@ -346,6 +391,16 @@ def _copy_key_file(source: str, target: Path) -> None:
     if not source_path.is_file() or not source_path.read_text().strip():
         raise Errors.config_invalid("--openrouter-key-file", f"no readable key at {source}")
     _write_private(target, source_path.read_text())
+
+
+def _read_env_value(env_path: Path, key: str) -> str:
+    if not env_path.exists():
+        return ""
+    for line in env_path.read_text().splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name == key:
+            return value.strip()
+    return ""
 
 
 def _write_env(root: Path, values: dict[str, str]) -> None:
