@@ -27,7 +27,6 @@ from app.installer.hooks_scripts import write_hook_scripts
 from app.installer.install_env import betterai_root, install_env_values
 from app.installer.memory_provider import memory_provider_wiring
 from app.mcp_client import mcp_call, server_get, server_post
-from app.settings import REQUIRED_KEYS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -136,19 +135,18 @@ def harness(
 @app.command()
 def doctor() -> None:
     """Diagnostic escape hatch: reports every check, exits 1 on failures."""
-    root = Path(betterai_root(_user_home()))
-    failures = 0
-    failures += _check("docker", shutil.which("docker") is not None)
-    failures += _check("compose file", (root / "docker-compose.yml").exists())
-    failures += _check("token mode 0600", _is_private(root / "token"))
-    failures += _check("openrouter key mode 0600", _is_private(root / "openrouter-key"))
-    failures += _check("bridge executable", os.access(root / "bin" / "betterai-mcp-stdio", os.X_OK))
-    failures += _check_env_fresh(root / ".env")
-    failures += _check_server_health()
-    for client in ("claude", "codex", "generic"):
-        status = client_status(client, _user_home())
-        typer.echo(f"{'ok' if status.installed else 'warn'} {client}: {'configured' if status.installed else 'not configured'}")
-    raise typer.Exit(0 if failures == 0 else 1)
+    from app.doctor import failure_count, run_doctor
+
+    checks = run_doctor(_user_home())
+    for check in checks:
+        status = "ok" if check.ok else ("warn" if check.advisory else "fail")
+        line = f"{status} {check.label}"
+        if check.detail:
+            line += f": {check.detail}"
+        if not check.ok and check.fix_hint:
+            line += f" -- fix: {check.fix_hint}"
+        typer.echo(line)
+    raise typer.Exit(0 if failure_count(checks) == 0 else 1)
 
 
 @app.command()
@@ -356,33 +354,6 @@ def _make_memory_dirs(provider: str, user_home: str) -> None:
     service, _ = memory_provider_wiring(provider, user_home)
     for volume in (service or {}).get("volumes", []):
         Path(volume.split(":", 1)[0]).mkdir(parents=True, exist_ok=True)
-
-
-def _check(label: str, ok: bool) -> int:
-    typer.echo(f"{'ok' if ok else 'fail'} {label}")
-    return 0 if ok else 1
-
-
-def _is_private(path: Path) -> bool:
-    return path.exists() and (path.stat().st_mode & 0o777) == 0o600
-
-
-def _check_env_fresh(env_path: Path) -> int:
-    if not env_path.exists():
-        return _check(".env", False)
-    present = {line.split("=", 1)[0] for line in env_path.read_text().splitlines() if "=" in line}
-    stale = [key for key in REQUIRED_KEYS if key not in present]
-    return _check(f".env stale (missing: {', '.join(stale)})" if stale else ".env fresh", not stale)
-
-
-def _check_server_health() -> int:
-    try:
-        payload = server_get(_user_home(), "/health")
-    except BetterAIError as exc:
-        typer.echo(f"fail server health: {exc}")
-        return 1
-    typer.echo(f"ok server health: {json.dumps(payload)}")
-    return 0
 
 
 def _fail_loud(fn):

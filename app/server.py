@@ -68,6 +68,7 @@ def build_app(settings: Settings) -> Any:
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
+    from app.api.routes import api_routes
     from app.hooks.routes import hook_routes
 
     deps = build_deps(settings)
@@ -77,6 +78,7 @@ def build_app(settings: Settings) -> Any:
     routes = [
         health_route(deps),
         *ops_routes(deps),
+        *api_routes(deps),
         *hook_routes(deps),
         Mount("/", app=http_app),
     ]
