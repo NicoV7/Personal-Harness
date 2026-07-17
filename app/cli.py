@@ -150,6 +150,17 @@ def doctor() -> None:
 
 
 @app.command()
+def ui(
+    port: int = typer.Option(None, "--port", help="Exact port to bind (fails if busy); default picks a free one"),
+    no_open: bool = typer.Option(False, "--no-open", help="Print the URL without opening a browser"),
+) -> None:
+    """Open the local dashboard: skills manager, logs/traces, doctor."""
+    from app.ui.server import run_ui
+
+    _fail_loud(lambda: run_ui(_user_home(), port=port, open_browser=not no_open))
+
+
+@app.command()
 def status() -> None:
     """Server /health as JSON (includes per-service state when provided)."""
     typer.echo(json.dumps(_fail_loud(lambda: server_get(_user_home(), "/health"))))

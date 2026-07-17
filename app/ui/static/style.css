@@ -1,0 +1,71 @@
+:root {
+  --bg: #0f1117; --panel: #171a23; --border: #2a2f3d; --text: #d7dae2;
+  --muted: #8b93a7; --accent: #6ea8fe; --ok: #4cc38a; --warn: #e5a50a; --fail: #e5534b;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #d9dee7; --text: #1c2430;
+    --muted: #5f6b7f; --accent: #1f6feb; color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+pre { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; }
+
+header { display: flex; align-items: center; gap: 20px; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.brand { font-weight: 700; letter-spacing: 0.4px; }
+nav a { color: var(--muted); text-decoration: none; margin-right: 14px; text-transform: capitalize; }
+nav a.active { color: var(--accent); font-weight: 600; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 18px 0; }
+.chip { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; min-width: 110px; }
+.chip .value { display: block; font-size: 17px; font-weight: 700; }
+.chip .label { color: var(--muted); font-size: 11.5px; }
+
+main { padding: 14px 18px 40px; }
+.banner.error { margin: 12px 18px 0; padding: 8px 12px; border: 1px solid var(--fail); border-radius: 6px; background: color-mix(in srgb, var(--fail) 12%, transparent); cursor: pointer; }
+.banner .dismiss { float: right; color: var(--muted); font-size: 12px; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+input, select, textarea, button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font: inherit; }
+input::placeholder { color: var(--muted); }
+button { cursor: pointer; }
+button:hover, button.active { border-color: var(--accent); color: var(--accent); }
+button[disabled] { opacity: 0.5; cursor: default; }
+
+.split { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.4fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.list-pane table, .events, .doctor { width: 100%; border-collapse: collapse; }
+.list-pane th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.list-pane td, .events td, .doctor td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.list-pane tbody tr { cursor: pointer; }
+.list-pane tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.list-pane tr.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+.detail-pane { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.detail-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.detail-head h2 { margin: 0; font-size: 16px; }
+article { max-width: 72ch; }
+article h2 { font-size: 15px; } article h3 { font-size: 14px; }
+
+.muted { color: var(--muted); }
+.tag { display: inline-block; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; font-size: 11.5px; color: var(--muted); }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.tag.fail { color: var(--fail); border-color: var(--fail); }
+
+.session { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; background: var(--panel); }
+.session summary { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+.events .ts { white-space: nowrap; color: var(--muted); width: 170px; }
+.events tr.event { cursor: pointer; }
+.events tr.event:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+.editor, .settings { display: flex; flex-direction: column; gap: 10px; }
+.editor label, .settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.editor .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.editor textarea { width: 100%; resize: vertical; }
+.row { flex-direction: row !important; align-items: center; gap: 8px; }
+.fix { margin-top: 3px; }
+.fix code { color: var(--accent); }
