@@ -340,9 +340,17 @@ async def _surface_plan_skills(deps: Deps, event: PostToolUse) -> str | None:
         ),
     )
     sections = "\n".join(_served_section(match.artifact) for match in served)
+    forced_artifacts, _ = _forced_artifacts(deps)
+    forced_line = (
+        "\nForced skills (always on, served with every prompt — listed "
+        "separately from plan matches): "
+        + ", ".join(artifact.id for artifact in forced_artifacts)
+        if forced_artifacts
+        else ""
+    )
     return (
         "BetterAI plan-mode skills for this plan are served below (receipts "
-        f"recorded at delivery; cached for get_plan_skills).\n{sections}"
+        f"recorded at delivery; cached for get_plan_skills).\n{sections}{forced_line}"
     )
 
 
@@ -438,7 +446,12 @@ def _prompt_context(
             "BetterAI required skills for this prompt are served below "
             "(receipts recorded at delivery). Apply them while working."
         )
-        lines += [_served_section(artifact) for artifact in served]
+        # Forced artifacts get their own labeled sections so always-on
+        # policy is visually distinct from what retrieval matched.
+        forced = [a for a in served if getattr(a, "forced", False)]
+        matched = [a for a in served if not getattr(a, "forced", False)]
+        lines += [_served_section(a, label="FORCED skill (always on)") for a in forced]
+        lines += [_served_section(a) for a in matched]
     if comment_line:
         lines.append(comment_line)
     if sync_line:
@@ -446,10 +459,10 @@ def _prompt_context(
     return "\n".join(lines)
 
 
-def _served_section(artifact) -> str:
+def _served_section(artifact, label: str = "required skill") -> str:
     title = getattr(artifact, "title", artifact.id)
     body = (getattr(artifact, "body", "") or "").strip()
-    return f"## BetterAI required skill: {artifact.id} — {title}\n{body}"
+    return f"## BetterAI {label}: {artifact.id} — {title}\n{body}"
 
 
 def _comment_policy_line(deps: Deps) -> str | None:

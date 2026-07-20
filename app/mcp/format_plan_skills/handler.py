@@ -45,21 +45,48 @@ async def handle(
     return {
         "plan_path": entry.plan_path,
         "skill_count": len(entry.matches),
-        "markdown": _render(entry),
+        "markdown": _render(entry, _forced_rows(deps)),
     }
 
 
-def _render(entry: PlanCacheEntry) -> str:
+def _forced_rows(deps: Deps) -> list[str]:
+    # A corpus outage must stay visible in the render, not silently drop
+    # the forced listing (same contract as the hook-side forced path).
+    try:
+        forced = [artifact for artifact in deps.corpus.read() if artifact.forced]
+    except Exception as error:  # noqa: BLE001 — rendered, never raised
+        return [f"| unavailable | corpus read failed: {error} |"]
+    return [
+        f"| {artifact.id} | forced — injected on every prompt |" for artifact in forced
+    ]
+
+
+def _render(entry: PlanCacheEntry, forced_rows: list[str]) -> str:
     matches = list(entry.matches.values())
     rows = [
         f"| {match.artifact.id} | {match.provenance} (hybrid {match.score:.2f}) |"
         for match in matches
     ] or ["| none matched | no corpus skill cleared the threshold for this plan |"]
     ids = ", ".join(match.artifact.id for match in matches) or "none"
+    forced_section = (
+        (
+            "### Forced skills (always on)",
+            "",
+            "| Skill | Why |",
+            "|---|---|",
+            *forced_rows,
+            "",
+            "### Matched for this plan",
+            "",
+        )
+        if forced_rows
+        else ()
+    )
     return "\n".join(
         (
             "## Skill Audit",
             "",
+            *forced_section,
             "| Skill | Why matched |",
             "|---|---|",
             *rows,

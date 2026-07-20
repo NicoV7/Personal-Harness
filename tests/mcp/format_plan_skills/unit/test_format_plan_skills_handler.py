@@ -48,6 +48,32 @@ async def test_renders_audit_table_with_provenance_and_instruction(tmp_path):
     assert fmt["payload"] == {"plan_path": PLAN, "skill_count": 1}
 
 
+async def test_forced_skills_render_in_their_own_section(tmp_path):
+    # arrange: one forced + one matched artifact in the corpus
+    from tests.mcp.gate_helpers import FakeCorpus
+
+    deps = make_deps(
+        tmp_path, corpus=FakeCorpus([make_skill("i-have-adhd", forced=True)])
+    )
+    match = PlanSkillMatch(
+        artifact=make_skill("rename-safely"),
+        score=0.9,
+        provenance="plan section 'Approach'",
+        served_at=now_iso(),
+    )
+    deps.plan_skills.upsert(PLAN, "hash-1", [match])
+
+    # act
+    markdown = (await handle(FormatPlanSkillsInput(), deps, META))["markdown"]
+
+    # assert: forced listed separately, before the matched table
+    assert "### Forced skills (always on)" in markdown
+    assert "| i-have-adhd | forced — injected on every prompt |" in markdown
+    assert "### Matched for this plan" in markdown
+    assert markdown.index("### Forced skills") < markdown.index("| rename-safely |")
+    assert "Proposed skill:" in markdown  # >=5-line audit-gate contract intact
+
+
 async def test_zero_match_plan_renders_placeholder_row(tmp_path):
     # arrange
     deps = make_deps(tmp_path)

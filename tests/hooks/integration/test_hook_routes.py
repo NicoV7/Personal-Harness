@@ -259,9 +259,10 @@ def test_forced_skills_are_injected_regardless_of_retrieval_score(tmp_path):
         json={"session_id": SESSION, "prompt": "add a feature"},
     ).json()
 
-    # assert: the forced body is served inline despite zero scored results
+    # assert: the forced body is served inline despite zero scored results,
+    # under the distinct always-on label
     context = body["hookSpecificOutput"]["additionalContext"]
-    assert "## BetterAI required skill: write-scoped-plan" in context
+    assert "## BetterAI FORCED skill (always on): write-scoped-plan" in context
 
 
 def test_edit_incrementally_forced_skill_skipped_when_granularity_none(tmp_path):
